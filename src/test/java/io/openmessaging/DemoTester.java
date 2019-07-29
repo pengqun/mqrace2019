@@ -94,7 +94,10 @@ public class DemoTester {
         System.out.printf("Value Check: %d ms Num: %d\n", checkEnd - checkStart, valueCheckNum.get());
 
         //评测结果
-        System.out.printf("Total Score:%d\n", (msgNum / (sendSend- sendStart) + msgCheckNum.get() / (msgCheckEnd - msgCheckStart) + valueCheckNum.get() / (msgCheckEnd - msgCheckStart)));
+        System.out.printf("Stage1 Score:%d\n", msgNum / (sendSend- sendStart));
+        System.out.printf("Stage2 Score:%d\n", msgCheckNum.get() / (msgCheckEnd - msgCheckStart));
+        System.out.printf("Stage3 Score:%d\n", valueCheckNum.get() / (checkEnd - checkStart));
+        System.out.printf("Total Score:%d\n", (msgNum / (sendSend- sendStart) + msgCheckNum.get() / (msgCheckEnd - msgCheckStart) + valueCheckNum.get() / (checkEnd - checkStart)));
     }
     static class Producer implements Runnable {
 
@@ -141,7 +144,7 @@ public class DemoTester {
         private int maxCheckSize;
 
         public MessageChecker(MessageStore messageStore, long maxTimeStamp, int checkTimes, int maxIndex, int maxCheckSize,
-                AtomicLong timesCounter, AtomicLong numCounter) {
+                              AtomicLong timesCounter, AtomicLong numCounter) {
             this.timesCounter = timesCounter;
             this.numCounter = numCounter;
             this.checkTimes = checkTimes;
@@ -161,7 +164,7 @@ public class DemoTester {
             Random random = new Random();
             while (timesCounter.getAndIncrement() < checkTimes && System.currentTimeMillis() <= maxTimeStamp) {
                 try {
-                    int aIndex1 = random.nextInt(maxIndex);
+                    int aIndex1 = random.nextInt(maxIndex - 1);
                     if (aIndex1 < 0) {
                         aIndex1 = 0;
                     }
@@ -228,7 +231,7 @@ public class DemoTester {
         private int maxCheckSize;
 
         public ValueChecker(MessageStore messageStore, long maxTimeStamp, int checkTimes, int maxIndex, int maxCheckSize,
-                AtomicLong timesCounter, AtomicLong numCounter) {
+                            AtomicLong timesCounter, AtomicLong numCounter) {
             this.timesCounter = timesCounter;
             this.numCounter = numCounter;
             this.checkTimes = checkTimes;
@@ -249,7 +252,7 @@ public class DemoTester {
             Random random = new Random();
             while (timesCounter.getAndIncrement() < checkTimes && System.currentTimeMillis() <= maxTimeStamp) {
                 try {
-                    int aIndex1 = random.nextInt(maxIndex);
+                    int aIndex1 = random.nextInt(maxIndex - 1);
                     if (aIndex1 < 0) {
                         aIndex1 = 0;
                     }

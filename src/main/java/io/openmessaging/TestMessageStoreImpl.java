@@ -10,9 +10,9 @@ import java.util.concurrent.atomic.AtomicLong;
 /**
  * @author .ignore 2019-07-29
  */
-public class NaiveMessageStoreImpl extends MessageStore {
+public class TestMessageStoreImpl extends MessageStore {
 
-    private static final Logger logger = Logger.getLogger(NaiveMessageStoreImpl.class);
+    private static final Logger logger = Logger.getLogger(TestMessageStoreImpl.class);
 
     private AtomicLong counter = new AtomicLong();
     private long _aMin = Long.MAX_VALUE;

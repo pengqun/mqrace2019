@@ -1,6 +1,7 @@
 package io.openmessaging;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentSkipListMap;
 
 /**
  * @author .ignore 2019-07-29
@@ -8,6 +9,7 @@ import java.util.*;
 public class SampleMessageStoreImpl extends MessageStore {
 
     private NavigableMap<Long, List<Message>> msgMap = new TreeMap<Long, List<Message>>();
+//    private NavigableMap<Long, List<Message>> msgMap = new ConcurrentSkipListMap<>();
 
     @Override
     public synchronized void put(Message message) {

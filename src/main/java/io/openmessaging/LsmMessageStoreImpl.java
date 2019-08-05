@@ -75,15 +75,15 @@ public class LsmMessageStoreImpl extends MessageStore {
             persistDone = true;
             persistThreadPool.shutdown();
 
-            logger.info("SSTableFile list: " + ssTableFileList.size());
-            for (SSTableFile file : ssTableFileList) {
-                try {
-                    logger.info("\t[" + file.tStart + ", " + file.tEnd + "] - "
-                            + file.fileChannel.size() + " / " + file.fileChannel.size() / Constants.MSG_BYTE_LENGTH);
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
-            }
+//            logger.info("SSTableFile list: " + ssTableFileList.size());
+//            for (SSTableFile file : ssTableFileList) {
+//                try {
+//                    logger.info("\t[" + file.tStart + ", " + file.tEnd + "] - "
+//                            + file.fileChannel.size() + " / " + file.fileChannel.size() / Constants.MSG_BYTE_LENGTH);
+//                } catch (IOException e) {
+//                    e.printStackTrace();
+//                }
+//            }
         }
         while (!persistDone) {
             logger.info("Waiting for all persist tasks to finish");
@@ -93,22 +93,23 @@ public class LsmMessageStoreImpl extends MessageStore {
             } catch (InterruptedException e) {
                 e.printStackTrace();
             }
+            logger.info("All persist tasks have finished");
         }
 
         ArrayList<Message> res = new ArrayList<>();
         ByteBuffer bufferForIndex = ByteBuffer.allocateDirect(8);
-//        long searchStart = System.currentTimeMillis();
+        long searchStart = System.currentTimeMillis();
 
         for (SSTableFile file : ssTableFileList) {
             if (tMax < file.tStart || tMin > file.tEnd) {
                 continue;
             }
-//            long fileSearchStart = System.currentTimeMillis();
+            long fileSearchStart = System.currentTimeMillis();
             FileChannel fileChannel = file.randomAccessFile.getChannel();
             try {
                 int index = 0;
                 int size = (int) fileChannel.size();
-//                logger.info("Total: " + total + ", tMin: " + tMin + ", tMax: " + tMax);
+//                logger.info("getMessage - tMin: " + tMin + ", tMax: " + tMax);
 
                 if (tMin > file.tStart) {
                     int start = 0;
@@ -150,7 +151,7 @@ public class LsmMessageStoreImpl extends MessageStore {
                         }
                         long a = buffer.getLong();
                         if (a >= aMin && a <= aMax) {
-                            byte[] body = new byte[8];
+                            byte[] body = new byte[Constants.BODY_BYTE_LENGTH];
                             buffer.get(body);
                             Message msg = new Message(a, t, body);
                             res.add(msg);
@@ -171,7 +172,7 @@ public class LsmMessageStoreImpl extends MessageStore {
 
         res.sort((o1, o2) -> (int) (o1.getT() - o2.getT()));
 //        logger.info("Result: ");
-//        for (Message m : res) {
+//        for (Message m : res.subList(0, Math.min(res.size(), 100))) {
 //            logger.info("m.t: " + m.getT() + ", m.a: " + m.getA());
 //        }
 

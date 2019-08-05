@@ -57,6 +57,10 @@ public class DemoTester {
         }
         long sendSend = System.currentTimeMillis();
         System.out.printf("Send: %d ms Num:%d\n", sendSend - sendStart, msgNum);
+//        if (true) {
+//            return;
+//        }
+
         long maxCheckTime = System.currentTimeMillis() + checkTime;
 
         //Step2: 查询聚合消息

@@ -21,6 +21,8 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     private static final int MAX_MEM_TABLE_SIZE = 100000;
 
+    private static final int GET_SAMPLE_RATE = 100;
+
     static {
         logger.info("LsmMessageStoreImpl loaded");
     }
@@ -59,7 +61,8 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     @Override
     public List<Message> getMessage(long aMin, long aMax, long tMin, long tMax) {
-        if (getCounter.incrementAndGet() == 1) {
+        int getId = getCounter.getAndIncrement();
+        if (getId == 0) {
             logger.info("Flush all memTables before getMessage");
             while (persistThreadPool.getActiveCount() + persistThreadPool.getQueue().size() > 0) {
                 logger.info("Waiting for previous tasks to finish");
@@ -109,7 +112,9 @@ public class LsmMessageStoreImpl extends MessageStore {
             try {
                 int index = 0;
                 int size = (int) fileChannel.size();
-//                logger.info("getMessage - tMin: " + tMin + ", tMax: " + tMax);
+                if (getId % GET_SAMPLE_RATE == 0) {
+                    logger.info("getMessage - tMin: " + tMin + ", tMax: " + tMax + ", getId: " + getId);
+                }
 
                 if (tMin > file.tStart) {
                     int start = 0;
@@ -128,7 +133,9 @@ public class LsmMessageStoreImpl extends MessageStore {
                         }
                     }
                     index = start;
-//                    logger.info("Found index: " + index + " in " + (System.currentTimeMillis() - fileSearchStart) + " ms");
+                    if (getId % GET_SAMPLE_RATE == 0) {
+                        logger.info("Found index: " + index + " in " + (System.currentTimeMillis() - fileSearchStart) + " ms");
+                    }
                 }
 
                 ByteBuffer buffer = ByteBuffer.allocateDirect(Constants.MSG_BYTE_LENGTH * 1000);
@@ -168,7 +175,9 @@ public class LsmMessageStoreImpl extends MessageStore {
                 e.printStackTrace();
             }
         }
-//        logger.info("Search end in " + (System.currentTimeMillis() - searchStart) + " ms");
+        if (getId % GET_SAMPLE_RATE == 0) {
+            logger.info("Search end in " + (System.currentTimeMillis() - searchStart) + " ms");
+        }
 
         res.sort((o1, o2) -> (int) (o1.getT() - o2.getT()));
 //        logger.info("Result: ");
@@ -176,7 +185,9 @@ public class LsmMessageStoreImpl extends MessageStore {
 //            logger.info("m.t: " + m.getT() + ", m.a: " + m.getA());
 //        }
 
-//        logger.info("Sort end in " + (System.currentTimeMillis() - searchStart) + " ms");
+        if (getId % GET_SAMPLE_RATE == 0) {
+            logger.info("Sort end in " + (System.currentTimeMillis() - searchStart) + " ms");
+        }
 
 //        logger.info("Done getMessage: aMin - " + aMin + ", aMax - " + aMax
 //                + ", tMin - " + tMin + ", tMax - " + tMax + ", counter = " + getCounter.get());

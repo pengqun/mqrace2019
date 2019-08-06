@@ -20,7 +20,7 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     private static final Logger logger = Logger.getLogger(LsmMessageStoreImpl.class);
 
-    private static final int MAX_MEM_TABLE_SIZE = 500000;
+    private static final int MAX_MEM_TABLE_SIZE = 100000;
 
     private static final int WRITE_BUFFER_SIZE = Constants.MSG_BYTE_LENGTH * 1000;
     private static final int READ_BUFFER_SIZE = Constants.MSG_BYTE_LENGTH * 1000;
@@ -90,6 +90,7 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     @Override
     public List<Message> getMessage(long aMin, long aMax, long tMin, long tMax) {
+        long getStart = System.currentTimeMillis();
         int getId = getCounter.getAndIncrement();
         if (getId % GET_SAMPLE_RATE == 0) {
             logger.info("getMessage - tMin: " + tMin + ", tMax: " + tMax
@@ -100,7 +101,7 @@ public class LsmMessageStoreImpl extends MessageStore {
             while (persistThreadPool.getActiveCount() + persistThreadPool.getQueue().size() > 0) {
                 logger.info("Waiting for previous persist tasks to finish");
                 try {
-                    Thread.sleep(100);
+                    Thread.sleep(10);
                 } catch (InterruptedException e) {
                     e.printStackTrace();
                 }
@@ -108,27 +109,23 @@ public class LsmMessageStoreImpl extends MessageStore {
             if (memTable.size() > 0) {
                 persistMemTable(memTable);
             }
+            sortSSTableList();
             persistDone = true;
-//            persistThreadPool.shutdown();
+            persistThreadPool.shutdown();
             printSSTableList();
+            logger.info("Flushed all memTables, time: " + (System.currentTimeMillis() - getStart));
         }
         while (!persistDone) {
             logger.info("Waiting for all persist tasks to finish");
             try {
-                Thread.sleep(100);
+                Thread.sleep(10);
             } catch (InterruptedException e) {
                 e.printStackTrace();
             }
+            logger.info("All persist tasks has finished, time: " + (System.currentTimeMillis() - getStart));
         }
 
-        long getStart = System.currentTimeMillis();
-        List<SSTableFile> targetFileList = new ArrayList<>();
-
-        for (SSTableFile file : ssTableFileList) {
-            if (tMax >= file.tStart && tMin <= file.tEnd) {
-                targetFileList.add(file);
-            }
-        }
+        List<SSTableFile> targetFileList = findTargetFileList(tMin, tMax);
         if (getId % GET_SAMPLE_RATE == 0) {
             logger.info("Found target files list: " + targetFileList.stream().map(s -> s.id).collect(Collectors.toList())
                     + ", time: " + (System.currentTimeMillis() - getStart) + ", getId: " + getId);
@@ -218,12 +215,7 @@ public class LsmMessageStoreImpl extends MessageStore {
         long sum = 0;
         long count = 0;
 
-        List<SSTableFile> targetFileList = new ArrayList<>();
-        for (SSTableFile file : ssTableFileList) {
-            if (tMax >= file.tStart && tMin <= file.tEnd) {
-                targetFileList.add(file);
-            }
-        }
+        List<SSTableFile> targetFileList = findTargetFileList(tMin, tMax);
 
         ByteBuffer bufferForT = ByteBuffer.allocateDirect(Constants.KEY_BYTE_LENGTH);
         ByteBuffer bufferForMsg = ByteBuffer.allocateDirect(READ_BUFFER_SIZE);
@@ -278,6 +270,30 @@ public class LsmMessageStoreImpl extends MessageStore {
         }
 
         return count == 0 ? 0 : sum / count;
+    }
+
+    private List<SSTableFile> findTargetFileList(long tMin, long tMax) {
+        List<SSTableFile> targetFileList = new ArrayList<>();
+        int index;
+        int start = 0;
+        int end = ssTableFileList.size() - 1;
+        while (start < end) {
+            index = (start + end) / 2;
+            long fileEnd = ssTableFileList.get(index).tEnd;
+            if (fileEnd < tMin) {
+                start = index + 1;
+            } else {
+                end = index;
+            }
+        }
+        index = start;
+        for (int i = index; i < Math.min(i + 10, ssTableFileList.size()); i++) {
+            SSTableFile file = ssTableFileList.get(i);
+            if (tMax >= file.tStart && tMin <= file.tEnd) {
+                targetFileList.add(file);
+            }
+        }
+        return targetFileList;
     }
 
     private void persistMemTable(NavigableMap<Long, Message> frozenMemTable) {
@@ -360,6 +376,10 @@ public class LsmMessageStoreImpl extends MessageStore {
                 e.printStackTrace();
             }
         }
+    }
+
+    private void sortSSTableList() {
+        ssTableFileList.sort(((o1, o2) -> (int) (o1.tEnd - o2.tEnd)));
     }
 
     private void printSSTableList() {

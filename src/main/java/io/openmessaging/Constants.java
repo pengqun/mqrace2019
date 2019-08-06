@@ -5,7 +5,7 @@ package io.openmessaging;
  */
 class Constants {
     static final String DATA_DIR = "/alidata1/race2019/data/";
-//        static final String DATA_DIR = "/tmp/";
+//    static final String DATA_DIR = "/tmp/";
 
     static final int KEY_BYTE_LENGTH = 4;
     static final int BODY_BYTE_LENGTH = 34;

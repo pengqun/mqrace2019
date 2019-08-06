@@ -20,15 +20,15 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     private static final Logger logger = Logger.getLogger(LsmMessageStoreImpl.class);
 
-    private static final int MAX_MEM_TABLE_SIZE = 100000;
+    private static final int MAX_MEM_TABLE_SIZE = 500000;
 
     private static final int WRITE_BUFFER_SIZE = Constants.MSG_BYTE_LENGTH * 1000;
     private static final int READ_BUFFER_SIZE = Constants.MSG_BYTE_LENGTH * 1000;
 
     private static final int PERSIST_SAMPLE_RATE = 100;
-    private static final int PUT_SAMPLE_RATE = 100000;
-    private static final int GET_SAMPLE_RATE = 10000;
-    private static final int AVG_SAMPLE_RATE = 10000;
+    private static final int PUT_SAMPLE_RATE = 10000000;
+    private static final int GET_SAMPLE_RATE = 1000;
+    private static final int AVG_SAMPLE_RATE = 1000;
 
 //    private static final int PERSIST_SAMPLE_RATE = 10000000;
 //    private static final int PUT_SAMPLE_RATE = 10000000;
@@ -281,6 +281,7 @@ public class LsmMessageStoreImpl extends MessageStore {
     }
 
     private void persistMemTable(NavigableMap<Long, Message> frozenMemTable) {
+        long persistStart = System.currentTimeMillis();
         int fileId = fileCounter.getAndIncrement();
         String fileName = Constants.DATA_DIR+ "sst" + fileId + ".data";
         if (fileId % PERSIST_SAMPLE_RATE == 0) {
@@ -332,7 +333,8 @@ public class LsmMessageStoreImpl extends MessageStore {
 
         if (fileId % PERSIST_SAMPLE_RATE == 0) {
             logger.info("Done persisting memTable to file: " + fileName
-                    + ", written msgs: " + writeCount + ", written bytes: " + writeBytes);
+                    + ", written msgs: " + writeCount + ", written bytes: " + writeBytes
+                    + ", time: " + (System.currentTimeMillis() - persistStart));
         }
     }
 

@@ -20,7 +20,7 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     private static final Logger logger = Logger.getLogger(LsmMessageStoreImpl.class);
 
-    private static final int MAX_MEM_TABLE_SIZE = 50000;
+    private static final int MAX_MEM_TABLE_SIZE = 100000;
 
     private static final int WRITE_BUFFER_SIZE = Constants.MSG_BYTE_LENGTH * 1000;
     private static final int READ_BUFFER_SIZE = Constants.MSG_BYTE_LENGTH * 1000;
@@ -42,7 +42,7 @@ public class LsmMessageStoreImpl extends MessageStore {
     private volatile NavigableMap<Long, Message> memTable = new TreeMap<>();
 //    private volatile NavigableMap<Long, Message> memTable = new ConcurrentSkipListMap<>();
 
-    private static ThreadPoolExecutor persistThreadPool = new ThreadPoolExecutor(1, 1,
+    private ThreadPoolExecutor persistThreadPool = new ThreadPoolExecutor(1, 1,
             0L, TimeUnit.MILLISECONDS,
             new LinkedBlockingQueue<>());
 
@@ -54,6 +54,14 @@ public class LsmMessageStoreImpl extends MessageStore {
     private AtomicInteger avgCounter = new AtomicInteger(0);
 
     private List<SSTableFile> ssTableFileList = new ArrayList<>();
+
+    private ThreadLocal<ByteBuffer> threadBufferForT = ThreadLocal.withInitial(()
+            -> ByteBuffer.allocateDirect(Constants.KEY_BYTE_LENGTH));
+
+    private ThreadLocal<ByteBuffer> threadBufferForMsg = ThreadLocal.withInitial(()
+            -> ByteBuffer.allocateDirect(READ_BUFFER_SIZE));
+
+//    private ThreadLocal<Message> threadMessagePool;
 
     @Override
     public void put(Message message) {
@@ -131,9 +139,9 @@ public class LsmMessageStoreImpl extends MessageStore {
                     + ", time: " + (System.currentTimeMillis() - getStart) + ", getId: " + getId);
         }
 
-        ArrayList<Message> result = new ArrayList<>();
-        ByteBuffer bufferForT = ByteBuffer.allocateDirect(Constants.KEY_BYTE_LENGTH);
-        ByteBuffer bufferForMsg = ByteBuffer.allocateDirect(READ_BUFFER_SIZE);
+        ArrayList<Message> result = new ArrayList<>(1024);
+        ByteBuffer bufferForT = threadBufferForT.get();
+        ByteBuffer bufferForMsg = threadBufferForMsg.get();
 
         for (SSTableFile file : targetFileList) {
             FileChannel fileChannel = file.channel;
@@ -208,7 +216,7 @@ public class LsmMessageStoreImpl extends MessageStore {
     @Override
     public long getAvgValue(long aMin, long aMax, long tMin, long tMax) {
         int avgId = avgCounter.getAndIncrement();
-        if (avgId % AVG_SAMPLE_RATE == 0) {
+        if (avgId % AVG_SAMPLE_RATE == 0 || avgId < 1000) {
             logger.info("getAvgValue - tMin: " + tMin + ", tMax: " + tMax
                     + ", aMin: " + aMin + ", aMax: " + aMax + ", getId: " + avgId);
         }
@@ -217,8 +225,8 @@ public class LsmMessageStoreImpl extends MessageStore {
 
         List<SSTableFile> targetFileList = findTargetFileList(tMin, tMax);
 
-        ByteBuffer bufferForT = ByteBuffer.allocateDirect(Constants.KEY_BYTE_LENGTH);
-        ByteBuffer bufferForMsg = ByteBuffer.allocateDirect(READ_BUFFER_SIZE);
+        ByteBuffer bufferForT = threadBufferForT.get();
+        ByteBuffer bufferForMsg = threadBufferForMsg.get();
 
         for (SSTableFile file : targetFileList) {
             FileChannel fileChannel = file.channel;

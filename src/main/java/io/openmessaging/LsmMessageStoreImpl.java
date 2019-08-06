@@ -8,9 +8,13 @@ import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.NavigableMap;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
 
 /**
  * @author .ignore 2019-07-29
@@ -19,39 +23,49 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     private static final Logger logger = Logger.getLogger(LsmMessageStoreImpl.class);
 
-    private static final int MAX_MEM_TABLE_SIZE = 100000;
+    private static final int MAX_MEM_TABLE_SIZE = 1000000;
 
-    private static final int GET_SAMPLE_RATE = 100;
+    private static final int WRITE_BUFFER_SIZE = Constants.MSG_BYTE_LENGTH * 1000;
+    private static final int READ_BUFFER_SIZE = Constants.MSG_BYTE_LENGTH * 1000;
+
+    private static final int PERSIST_SAMPLE_RATE = 100;
+    private static final int GET_SAMPLE_RATE = 1000;
+    private static final int AVG_SAMPLE_RATE = 1000;
 
     static {
         logger.info("LsmMessageStoreImpl loaded");
     }
 
-    private NavigableMap<Long, List<Message>> memTable = new TreeMap<>();
+//    private NavigableMap<Long, List<Message>> memTable = new TreeMap<>();
 //    private volatile NavigableMap<Long, List<Message>> memTable = new ConcurrentSkipListMap<>();
+    private volatile NavigableMap<Long, Message> memTable = new ConcurrentSkipListMap<>();
 
     private static ThreadPoolExecutor persistThreadPool = new ThreadPoolExecutor(1, 1,
             0L, TimeUnit.MILLISECONDS,
             new LinkedBlockingQueue<>());
 
     private AtomicInteger putCounter = new AtomicInteger(0);
-    private AtomicInteger persistCounter = new AtomicInteger(0);
+    private AtomicInteger fileCounter = new AtomicInteger(0);
     private volatile boolean persistDone = false;
 
     private AtomicInteger getCounter = new AtomicInteger(0);
 
+    private AtomicInteger avgCounter = new AtomicInteger(0);
+
     private List<SSTableFile> ssTableFileList = new ArrayList<>();
 
     @Override
-    public synchronized void put(Message message) {
-        if (!memTable.containsKey(message.getT())) {
-            memTable.put(message.getT(), new ArrayList<>());
+    public void put(Message message) {
+        long key = (message.getT() << 32) + ThreadLocalRandom.current().nextInt(Integer.MAX_VALUE);
+        Message conflictMessage = memTable.put(key, message);
+        if (conflictMessage != null) {
+            logger.info("[WARN] Put conflict message back");
+            put(conflictMessage);
         }
-        memTable.get(message.getT()).add(message);
 
         if (putCounter.incrementAndGet() % MAX_MEM_TABLE_SIZE == 0) {
-            logger.info("Submit memTable persist task");
-            NavigableMap<Long, List<Message>> frozenMemTable = memTable;
+//            logger.info("Submit memTable persist task");
+            NavigableMap<Long, Message> frozenMemTable = memTable;
             memTable = new ConcurrentSkipListMap<>();
             persistThreadPool.execute(() -> {
                 persistMemTable(frozenMemTable);
@@ -62,10 +76,14 @@ public class LsmMessageStoreImpl extends MessageStore {
     @Override
     public List<Message> getMessage(long aMin, long aMax, long tMin, long tMax) {
         int getId = getCounter.getAndIncrement();
+        if (getId % GET_SAMPLE_RATE == 0) {
+            logger.info("getMessage - tMin: " + tMin + ", tMax: " + tMax
+                    + ", aMin: " + aMin + ", aMax: " + aMax + ", getId: " + getId);
+        }
         if (getId == 0) {
             logger.info("Flush all memTables before getMessage");
             while (persistThreadPool.getActiveCount() + persistThreadPool.getQueue().size() > 0) {
-                logger.info("Waiting for previous tasks to finish");
+                logger.info("Waiting for previous persist tasks to finish");
                 try {
                     Thread.sleep(100);
                 } catch (InterruptedException e) {
@@ -76,56 +94,48 @@ public class LsmMessageStoreImpl extends MessageStore {
                 persistMemTable(memTable);
             }
             persistDone = true;
-            persistThreadPool.shutdown();
-
-//            logger.info("SSTableFile list: " + ssTableFileList.size());
-//            for (SSTableFile file : ssTableFileList) {
-//                try {
-//                    logger.info("\t[" + file.tStart + ", " + file.tEnd + "] - "
-//                            + file.fileChannel.size() + " / " + file.fileChannel.size() / Constants.MSG_BYTE_LENGTH);
-//                } catch (IOException e) {
-//                    e.printStackTrace();
-//                }
-//            }
+//            persistThreadPool.shutdown();
+            printSSTableList();
         }
         while (!persistDone) {
             logger.info("Waiting for all persist tasks to finish");
             try {
                 Thread.sleep(100);
-//                Thread.sleep(10000000);
             } catch (InterruptedException e) {
                 e.printStackTrace();
             }
-            logger.info("All persist tasks have finished");
         }
 
-        ArrayList<Message> res = new ArrayList<>();
-        ByteBuffer bufferForIndex = ByteBuffer.allocateDirect(8);
-        long searchStart = System.currentTimeMillis();
+        long getStart = System.currentTimeMillis();
+        List<SSTableFile> targetFileList = new ArrayList<>();
 
         for (SSTableFile file : ssTableFileList) {
-            if (tMax < file.tStart || tMin > file.tEnd) {
-                continue;
+            if (tMax >= file.tStart && tMin <= file.tEnd) {
+                targetFileList.add(file);
             }
-            long fileSearchStart = System.currentTimeMillis();
-            FileChannel fileChannel = file.randomAccessFile.getChannel();
+        }
+        if (getId % GET_SAMPLE_RATE == 0) {
+            logger.info("Found target files list: " + targetFileList.stream().map(s -> s.id).collect(Collectors.toList())
+                    + ", time: " + (System.currentTimeMillis() - getStart) + ", getId: " + getId);
+        }
+
+        ArrayList<Message> result = new ArrayList<>();
+        ByteBuffer bufferForT = ByteBuffer.allocateDirect(Constants.KEY_BYTE_LENGTH);
+        ByteBuffer bufferForMsg = ByteBuffer.allocateDirect(READ_BUFFER_SIZE);
+
+        for (SSTableFile file : targetFileList) {
+            FileChannel fileChannel = file.channel;
             try {
                 int index = 0;
-                int size = (int) fileChannel.size();
-                if (getId % GET_SAMPLE_RATE == 0) {
-                    logger.info("getMessage - tMin: " + tMin + ", tMax: " + tMax + ", getId: " + getId);
-                }
-
                 if (tMin > file.tStart) {
                     int start = 0;
-                    int end = size / Constants.MSG_BYTE_LENGTH - 1;
+                    int end = file.msgs - 1;
                     while (start < end) {
                         index = (start + end) / 2;
-                        fileChannel.read(bufferForIndex, index * Constants.MSG_BYTE_LENGTH);
-                        bufferForIndex.flip();
-                        long t = bufferForIndex.getLong();
-//                        logger.info("Binary search t: " + t);
-                        bufferForIndex.clear();
+                        fileChannel.read(bufferForT, index * Constants.MSG_BYTE_LENGTH);
+                        bufferForT.flip();
+                        long t = bufferForT.getInt();
+                        bufferForT.clear();
                         if (t < tMin) {
                             start = index + 1;
                         } else {
@@ -133,93 +143,89 @@ public class LsmMessageStoreImpl extends MessageStore {
                         }
                     }
                     index = start;
-                    if (getId % GET_SAMPLE_RATE == 0) {
-                        logger.info("Found index: " + index + " in " + (System.currentTimeMillis() - fileSearchStart) + " ms");
-                    }
+                }
+                if (getId % GET_SAMPLE_RATE == 0) {
+                    logger.info("Found index: " + index + " for file: " + file.id
+                            + ", time: " + (System.currentTimeMillis() - getStart) + ", getId: " + getId);
                 }
 
-                ByteBuffer buffer = ByteBuffer.allocateDirect(Constants.MSG_BYTE_LENGTH * 1000);
                 int offset = index * Constants.MSG_BYTE_LENGTH;
+                boolean allFound = false;
 
-                while (offset < size) {
-                    int bytes = fileChannel.read(buffer, offset);
-                    if (bytes <= 0) {
-                        break;
-                    }
-                    offset += bytes;
+                while (!allFound && offset < file.size) {
+                    offset += fileChannel.read(bufferForMsg, offset);
+                    bufferForMsg.flip();
 
-                    buffer.flip();
-                    boolean done = false;
-                    while (buffer.remaining() > 0) {
-                        long t = buffer.getLong();
+                    while (bufferForMsg.remaining() > 0) {
+                        long t = bufferForMsg.getInt();
                         if (t > tMax) {
-                            done = true;
+                            allFound = true;
                             break;
                         }
-                        long a = buffer.getLong();
+                        long a = bufferForMsg.getInt();
                         if (a >= aMin && a <= aMax) {
                             byte[] body = new byte[Constants.BODY_BYTE_LENGTH];
-                            buffer.get(body);
+                            bufferForMsg.get(body);
                             Message msg = new Message(a, t, body);
-                            res.add(msg);
+                            result.add(msg);
                         } else {
-                            buffer.position(buffer.position() + Constants.BODY_BYTE_LENGTH);
+                            bufferForMsg.position(bufferForMsg.position() + Constants.BODY_BYTE_LENGTH);
                         }
                     }
-                    if (done) {
-                        break;
-                    }
-                    buffer.clear();
+                    bufferForMsg.clear();
+                }
+                if (getId % GET_SAMPLE_RATE == 0) {
+                    logger.info("Found total " + result.size() + " msgs for file: " + file.id
+                            + ", time: " + (System.currentTimeMillis() - getStart) + ", getId: " + getId);
                 }
             } catch (IOException e) {
                 e.printStackTrace();
             }
         }
-        if (getId % GET_SAMPLE_RATE == 0) {
-            logger.info("Search end in " + (System.currentTimeMillis() - searchStart) + " ms");
-        }
 
-        res.sort((o1, o2) -> (int) (o1.getT() - o2.getT()));
-//        logger.info("Result: ");
-//        for (Message m : res.subList(0, Math.min(res.size(), 100))) {
-//            logger.info("m.t: " + m.getT() + ", m.a: " + m.getA());
-//        }
+        result.sort((o1, o2) -> (int) (o1.getT() - o2.getT()));
+//        printGetResult(result);
 
         if (getId % GET_SAMPLE_RATE == 0) {
-            logger.info("Sort end in " + (System.currentTimeMillis() - searchStart) + " ms");
+            logger.info("Return sorted result with size: " + result.size()
+                    + ", time: " + (System.currentTimeMillis() - getStart) + ", getId: " + getId);
         }
-
-//        logger.info("Done getMessage: aMin - " + aMin + ", aMax - " + aMax
-//                + ", tMin - " + tMin + ", tMax - " + tMax + ", counter = " + getCounter.get());
-        return res;
+        return result;
     }
 
     @Override
     public long getAvgValue(long aMin, long aMax, long tMin, long tMax) {
+        int avgId = avgCounter.getAndIncrement();
+        if (avgId % AVG_SAMPLE_RATE == 0) {
+            logger.info("getAvgValue - tMin: " + tMin + ", tMax: " + tMax
+                    + ", aMin: " + aMin + ", aMax: " + aMax + ", getId: " + avgId);
+        }
         long sum = 0;
         long count = 0;
 
-        ByteBuffer bufferForIndex = ByteBuffer.allocateDirect(8);
-
+        List<SSTableFile> targetFileList = new ArrayList<>();
         for (SSTableFile file : ssTableFileList) {
-            if (tMax < file.tStart || tMin > file.tEnd) {
-                continue;
+            if (tMax >= file.tStart && tMin <= file.tEnd) {
+                targetFileList.add(file);
             }
-            FileChannel fileChannel = file.randomAccessFile.getChannel();
+        }
+
+        ByteBuffer bufferForT = ByteBuffer.allocateDirect(Constants.KEY_BYTE_LENGTH);
+        ByteBuffer bufferForMsg = ByteBuffer.allocateDirect(READ_BUFFER_SIZE);
+
+        for (SSTableFile file : targetFileList) {
+            FileChannel fileChannel = file.channel;
             try {
                 int index = 0;
-                int size = (int) fileChannel.size();
-
                 if (tMin > file.tStart) {
                     int start = 0;
-                    int end = size / Constants.MSG_BYTE_LENGTH - 1;
+                    int end = file.msgs - 1;
                     while (start < end) {
                         index = (start + end) / 2;
-                        fileChannel.read(bufferForIndex, index * Constants.MSG_BYTE_LENGTH);
-                        bufferForIndex.flip();
-                        long t = bufferForIndex.getLong();
-//                        logger.info("Binary search t: " + t);
-                        bufferForIndex.clear();
+                        fileChannel.read(bufferForT, index * Constants.MSG_BYTE_LENGTH);
+                        bufferForT.flip();
+                        long t = bufferForT.getInt();
+                        bufferForT.clear();
                         if (t < tMin) {
                             start = index + 1;
                         } else {
@@ -227,38 +233,29 @@ public class LsmMessageStoreImpl extends MessageStore {
                         }
                     }
                     index = start;
-//                    logger.info("Found index: " + index + " in " + (System.currentTimeMillis() - fileSearchStart) + " ms");
                 }
 
-                ByteBuffer buffer = ByteBuffer.allocateDirect(Constants.MSG_BYTE_LENGTH * 100);
                 int offset = index * Constants.MSG_BYTE_LENGTH;
+                boolean allFound = false;
 
-                while (offset < size) {
-                    int bytes = fileChannel.read(buffer, offset);
-                    if (bytes <= 0) {
-                        break;
-                    }
-                    offset += bytes;
+                while (!allFound && offset < file.size) {
+                    offset += fileChannel.read(bufferForMsg, offset);
+                    bufferForMsg.flip();
 
-                    buffer.flip();
-                    boolean done = false;
-                    while (buffer.remaining() > 0) {
-                        long t = buffer.getLong();
+                    while (bufferForMsg.remaining() > 0) {
+                        long t = bufferForMsg.getInt();
                         if (t > tMax) {
-                            done = true;
+                            allFound = true;
                             break;
                         }
-                        long a = buffer.getLong();
+                        long a = bufferForMsg.getInt();
                         if (a >= aMin && a <= aMax) {
                             sum += a;
                             count++;
                         }
-                        buffer.position(buffer.position() + Constants.BODY_BYTE_LENGTH);
+                        bufferForMsg.position(bufferForMsg.position() + Constants.BODY_BYTE_LENGTH);
                     }
-                    if (done) {
-                        break;
-                    }
-                    buffer.clear();
+                    bufferForMsg.clear();
                 }
             } catch (IOException e) {
                 e.printStackTrace();
@@ -268,97 +265,102 @@ public class LsmMessageStoreImpl extends MessageStore {
         return count == 0 ? 0 : sum / count;
     }
 
-    private void persistMemTable(NavigableMap<Long, List<Message>> frozenMemTable) {
-        String fileName = Constants.DATA_DIR+ "sst" + persistCounter.getAndIncrement() + ".data";
-        logger.info("Start persisting memTable to file: " + fileName);
+    private void persistMemTable(NavigableMap<Long, Message> frozenMemTable) {
+        int fileId = fileCounter.getAndIncrement();
+        String fileName = Constants.DATA_DIR+ "sst" + fileId + ".data";
+        if (fileId % PERSIST_SAMPLE_RATE == 0) {
+            logger.info("Start persisting memTable to file: " + fileName);
+        }
 
-        RandomAccessFile ssTableFile = null;
+        RandomAccessFile raf = null;
         try {
-            ssTableFile = new RandomAccessFile(fileName, "rw");
+            raf = new RandomAccessFile(fileName, "rw");
         } catch (FileNotFoundException e) {
-            logger.info("File not found", e);
+            logger.info("[ERROR] File not found", e);
             throw new RuntimeException(e);
         }
-        FileChannel fileChannel = ssTableFile.getChannel();
 
-        ByteBuffer buffer = ByteBuffer.allocateDirect(Constants.MSG_BYTE_LENGTH * 100);
+        FileChannel channel = raf.getChannel();
+        ByteBuffer buffer = ByteBuffer.allocateDirect(WRITE_BUFFER_SIZE);
         int writeCount = 0;
         int writeBytes = 0;
-        for (Map.Entry<Long, List<Message>> entry : frozenMemTable.entrySet()) {
-            for (Message msg : entry.getValue()) {
-                if (buffer.remaining() < Constants.MSG_BYTE_LENGTH) {
-                    buffer.flip();
-                    try {
-                        writeBytes += buffer.limit();
-                        fileChannel.write(buffer);
-                    } catch (IOException e) {
-                        logger.info("ERROR write to file channel: " + e.getMessage());
-                    }
-                    buffer.clear();
+
+        for (Map.Entry<Long, Message> entry : frozenMemTable.entrySet()) {
+            Message msg = entry.getValue();
+            if (buffer.remaining() < Constants.MSG_BYTE_LENGTH) {
+                buffer.flip();
+                try {
+                    writeBytes += buffer.limit();
+                    channel.write(buffer);
+                } catch (IOException e) {
+                    logger.info("[ERROR] Write to channel failed: " + e.getMessage());
                 }
-                buffer.putLong(msg.getT());
-                buffer.putLong(msg.getA());
-                buffer.put(msg.getBody());
-                writeCount++;
+                buffer.clear();
             }
+            buffer.putInt((int) msg.getT());
+            buffer.putInt((int) msg.getA());
+            buffer.put(msg.getBody());
+            writeCount++;
         }
 
         buffer.flip();
         try {
             writeBytes += buffer.limit();
-            fileChannel.write(buffer);
+            channel.write(buffer);
         } catch (IOException e) {
             logger.info("ERROR write to file channel: " + e.getMessage());
         }
         buffer.clear();
 
-        ssTableFileList.add(new SSTableFile(ssTableFile, fileChannel,
-                frozenMemTable.firstEntry().getKey(), frozenMemTable.lastEntry().getKey()));
-        logger.info("Done persisting memTable to file: " + fileName
-                + ", written msgs: " + writeCount + ", written bytes: " + writeBytes);
-    }
+        ssTableFileList.add(new SSTableFile(fileId, raf, channel, frozenMemTable.firstEntry().getValue().getT(),
+                frozenMemTable.lastEntry().getValue().getT()));
 
-    private static class SSTableFile {
-        RandomAccessFile randomAccessFile;
-        FileChannel fileChannel;
-        long tStart = 0;
-        long tEnd = 0;
-
-        SSTableFile(RandomAccessFile randomAccessFile, FileChannel fileChannel, long tStart, long tEnd) {
-            this.randomAccessFile = randomAccessFile;
-            this.fileChannel = fileChannel;
-            this.tStart = tStart;
-            this.tEnd = tEnd;
+        if (fileId % PERSIST_SAMPLE_RATE == 0) {
+            logger.info("Done persisting memTable to file: " + fileName
+                    + ", written msgs: " + writeCount + ", written bytes: " + writeBytes);
         }
     }
 
-//    private Long buildKey(Message message) {
-//        return message.getA()
-//    }
+    private static class SSTableFile {
+        RandomAccessFile file;
+        FileChannel channel;
+        int id = -1;
+        long tStart = 0;
+        long tEnd = 0;
+        int size = 0;
+        int msgs = 0;
 
-//    private static class MessageValue {
-//        private long a;
-//        private byte[] body;
-//
-//        public MessageValue(long a, byte[] body) {
-//            this.a = a;
-//            this.body = body;
-//        }
-//
-//        public long getA() {
-//            return a;
-//        }
-//
-//        public void setA(long a) {
-//            this.a = a;
-//        }
-//
-//        public byte[] getBody() {
-//            return body;
-//        }
-//
-//        public void setBody(byte[] body) {
-//            this.body = body;
-//        }
-//    }
+        SSTableFile(int id, RandomAccessFile file, FileChannel channel, long tStart, long tEnd) {
+            this.id = id;
+            this.file = file;
+            this.channel = channel;
+            this.tStart = tStart;
+            this.tEnd = tEnd;
+            try {
+                this.size = (int) channel.size();
+                this.msgs = size / Constants.MSG_BYTE_LENGTH;
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    private void printSSTableList() {
+        logger.info("SSTableFile list with size: " + ssTableFileList.size());
+        for (SSTableFile file : ssTableFileList.subList(0, Math.min(10, ssTableFileList.size()))) {
+            try {
+                logger.info(file.id + "\t[" + file.tStart + ", " + file.tEnd + "] - "
+                        + file.channel.size() + " / " + Constants.MSG_BYTE_LENGTH + " = " + file.msgs);
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    private void printGetResult(List<Message> result) {
+        logger.info("Get result with size: " + result.size());
+        for (Message m : result.subList(0, Math.min(result.size(), 10))) {
+            logger.info("m.t: " + m.getT() + ", m.a: " + m.getA());
+        }
+    }
 }

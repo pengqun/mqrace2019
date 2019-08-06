@@ -15,6 +15,7 @@ public class DemoTester {
         //评测相关配置
         //发送阶段的发送数量，也即发送阶段必须要在规定时间内把这些消息发送完毕方可
         int msgNum  = 1000000;
+//        msgNum  = 100000000;
         //发送阶段的最大持续时间，也即在该时间内，如果消息依然没有发送完毕，则退出评测
         int sendTime = 10 * 60 * 1000;
         //查询阶段的最大持续时间，也即在该时间内，如果消息依然没有消费完毕，则退出评测
@@ -59,9 +60,7 @@ public class DemoTester {
         }
         long sendSend = System.currentTimeMillis();
         System.out.printf("Send: %d ms Num:%d\n", sendSend - sendStart, msgNum);
-//        if (true) {
-//            return;
-//        }
+//        if (true) return;
 
         long maxCheckTime = System.currentTimeMillis() + checkTime;
 

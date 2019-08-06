@@ -8,10 +8,7 @@ import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.NavigableMap;
+import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
@@ -28,10 +25,10 @@ public class LsmMessageStoreImpl extends MessageStore {
     private static final int WRITE_BUFFER_SIZE = Constants.MSG_BYTE_LENGTH * 1000;
     private static final int READ_BUFFER_SIZE = Constants.MSG_BYTE_LENGTH * 1000;
 
-    private static final int PERSIST_SAMPLE_RATE = 1;
-    private static final int PUT_SAMPLE_RATE = 10000;
-    private static final int GET_SAMPLE_RATE = 1000;
-    private static final int AVG_SAMPLE_RATE = 1000;
+    private static final int PERSIST_SAMPLE_RATE = 100;
+    private static final int PUT_SAMPLE_RATE = 100000;
+    private static final int GET_SAMPLE_RATE = 10000;
+    private static final int AVG_SAMPLE_RATE = 10000;
 
 //    private static final int PERSIST_SAMPLE_RATE = 10000000;
 //    private static final int PUT_SAMPLE_RATE = 10000000;
@@ -42,7 +39,8 @@ public class LsmMessageStoreImpl extends MessageStore {
         logger.info("LsmMessageStoreImpl loaded");
     }
 
-    private volatile NavigableMap<Long, Message> memTable = new ConcurrentSkipListMap<>();
+    private volatile NavigableMap<Long, Message> memTable = new TreeMap<>();
+//    private volatile NavigableMap<Long, Message> memTable = new ConcurrentSkipListMap<>();
 
     private static ThreadPoolExecutor persistThreadPool = new ThreadPoolExecutor(1, 1,
             0L, TimeUnit.MILLISECONDS,
@@ -65,25 +63,28 @@ public class LsmMessageStoreImpl extends MessageStore {
         }
         long putStart = System.currentTimeMillis();
         long key = (message.getT() << 32) + ThreadLocalRandom.current().nextInt(Integer.MAX_VALUE);
-        Message conflictMessage = memTable.put(key, message);
+
+        Message conflictMessage;
+        synchronized (this) {
+            conflictMessage = memTable.put(key, message);
+        }
         if (conflictMessage != null) {
             logger.info("[WARN] Put conflict message back");
             put(conflictMessage);
         }
         if (putId % PUT_SAMPLE_RATE == 0) {
-            logger.info("Put message to memTable done, time: "
+            logger.info("putMessage to memTable with key " + key + ", time: "
                     + (System.currentTimeMillis() - putStart) + ", putId: " + putId);
         }
 
         if ((putId + 1) % MAX_MEM_TABLE_SIZE == 0) {
-            logger.info("Submit memTable persist task, putId: " + putId);
+//            logger.info("Submit memTable persist task, putId: " + putId);
             NavigableMap<Long, Message> frozenMemTable = memTable;
-            memTable = new ConcurrentSkipListMap<>();
-            persistThreadPool.execute(() -> {
-                persistMemTable(frozenMemTable);
-            });
-            logger.info("Submitted memTable persist task, time: "
-                    + (System.currentTimeMillis() - putStart) + ", putId: " + putId);
+//            memTable = new ConcurrentSkipListMap<>();
+            memTable = new TreeMap<>();
+            persistThreadPool.execute(() -> persistMemTable(frozenMemTable));
+//            logger.info("Submitted memTable persist task, time: "
+//                    + (System.currentTimeMillis() - putStart) + ", putId: " + putId);
         }
     }
 

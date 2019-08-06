@@ -5,12 +5,9 @@ package io.openmessaging;
  */
 class Constants {
     static final String DATA_DIR = "/alidata1/race2019/data/";
-    static final int MSG_BYTE_LENGTH = 50;
-    static final int BODY_BYTE_LENGTH = 34;
-    static final int KEY_BYTE_LENGTH = 8;
+//        static final String DATA_DIR = "/tmp/";
 
-//    static final String DATA_DIR = "/tmp/";
-//    static final int MSG_BYTE_LENGTH = 16;
-//    static final int BODY_BYTE_LENGTH = 8;
-//    static final int KEY_BYTE_LENGTH = 4;
+    static final int KEY_BYTE_LENGTH = 4;
+    static final int BODY_BYTE_LENGTH = 34;
+    static final int MSG_BYTE_LENGTH = 42;
 }

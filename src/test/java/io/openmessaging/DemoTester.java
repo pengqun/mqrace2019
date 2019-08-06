@@ -123,7 +123,8 @@ public class DemoTester {
             long count;
             while ( (count = counter.getAndIncrement()) < maxMsgNum && System.currentTimeMillis() <= maxTimeStamp) {
                 try {
-                    ByteBuffer buffer = ByteBuffer.allocate(8);
+//                    ByteBuffer buffer = ByteBuffer.allocate(8);
+                    ByteBuffer buffer = ByteBuffer.allocate(34);
                     buffer.putLong(0, count);
                     // 为测试方便, 插入的是有规律的数据, 不是实际测评的情况
                     messageStore.put(new Message(count, count, buffer.array()));

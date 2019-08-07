@@ -218,9 +218,9 @@ public class LsmMessageStoreImpl extends MessageStore {
         if (avgId % AVG_SAMPLE_RATE == 0) {
             logger.info("getAvgValue - tMin: " + tMin + ", tMax: " + tMax
                     + ", aMin: " + aMin + ", aMax: " + aMax + ", getId: " + avgId);
-            if (avgId == 30000) {
-                throw new RuntimeException("Abort!");
-            }
+//            if (avgId == 30000) {
+//                throw new RuntimeException("Abort!");
+//            }
         }
         long sum = 0;
         long count = 0;

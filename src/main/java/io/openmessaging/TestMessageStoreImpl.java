@@ -26,6 +26,10 @@ public class TestMessageStoreImpl extends MessageStore {
     private long totalNegDiff = 0;
     private long negDiffCount = 0;
 
+    private short[] msgCounter = new short[1100000000];
+    private int minRepeat = Integer.MAX_VALUE;
+    private int maxRepeat = Integer.MIN_VALUE;
+
     @Override
     public synchronized void put(Message message) {
 //        if (counter.incrementAndGet() < 100000) {
@@ -47,6 +51,11 @@ public class TestMessageStoreImpl extends MessageStore {
             totalNegDiff += diff;
             negDiffCount++;
         }
+
+        msgCounter[(int) message.getT()]++;
+
+        minRepeat = Math.min(minRepeat, msgCounter[(int) message.getT()]);
+        maxRepeat = Math.max(maxRepeat, msgCounter[(int) message.getT()]);
     }
 
     @Override
@@ -58,6 +67,7 @@ public class TestMessageStoreImpl extends MessageStore {
                 + ", posDiffCount - " + posDiffCount + ", negDiffCount - " + negDiffCount
                 + ", avgPosDiff - " + (posDiffCount > 0 ? totalPosDiff / posDiffCount : 0)
                 + ", avgNegDiff - " + (negDiffCount > 0 ? totalNegDiff / negDiffCount : 0)
+                + ", minRepeat - " + minRepeat + ", maxRepeat - " + maxRepeat
         );
 
         ArrayList<Message> res = new ArrayList<Message>();

@@ -22,7 +22,7 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     private static final int MAX_MEM_TABLE_SIZE = 100000;
 
-    private static final int SST_FILE_INDEX_RATE = 4;
+    private static final int SST_FILE_INDEX_RATE = 32;
 
     private static final int WRITE_BUFFER_SIZE = Constants.MSG_BYTE_LENGTH * 1000;
     private static final int READ_BUFFER_SIZE = Constants.MSG_BYTE_LENGTH * 1000;

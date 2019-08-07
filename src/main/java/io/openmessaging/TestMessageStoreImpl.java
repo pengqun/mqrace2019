@@ -66,7 +66,7 @@ public class TestMessageStoreImpl extends MessageStore {
 
         int t = (int) message.getT();
         if (t < accumCounter.length) {
-            accumCounter[t] += message.getA();
+            accumCounter[t] += diff;
             minAccum = Math.min(minAccum, accumCounter[t]);
             maxAccum = Math.max(maxAccum, accumCounter[t]);
         }

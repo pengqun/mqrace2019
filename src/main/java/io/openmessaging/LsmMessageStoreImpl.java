@@ -201,12 +201,13 @@ public class LsmMessageStoreImpl extends MessageStore {
     @Override
     public long getAvgValue(long aMin, long aMax, long tMin, long tMax) {
         int avgId = avgCounter.getAndIncrement();
-        if (avgId % AVG_SAMPLE_RATE == 0 || avgId < 1000) {
+//        if (avgId % AVG_SAMPLE_RATE == 0 || avgId < 1000) {
+        if (avgId % AVG_SAMPLE_RATE == 0) {
             logger.info("getAvgValue - tMin: " + tMin + ", tMax: " + tMax
                     + ", aMin: " + aMin + ", aMax: " + aMax + ", getId: " + avgId);
-            if (avgId == 30000) {
-                throw new RuntimeException("Abort!");
-            }
+//            if (avgId == 30000) {
+//                throw new RuntimeException("Abort!");
+//            }
         }
         long sum = 0;
         long count = 0;

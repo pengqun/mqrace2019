@@ -22,7 +22,7 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     private static final int MAX_MEM_TABLE_SIZE = 100000;
 
-    private static final int SST_FILE_INDEX_RATE = 32;
+    private static final int SST_FILE_INDEX_RATE = 4;
 
     private static final int WRITE_BUFFER_SIZE = Constants.MSG_BYTE_LENGTH * 1000;
     private static final int READ_BUFFER_SIZE = Constants.MSG_BYTE_LENGTH * 1000;
@@ -254,12 +254,12 @@ public class LsmMessageStoreImpl extends MessageStore {
         if (tMin <= file.tStart) {
             return 0;
         }
-        List<Integer> fileIndexList = file.fileIndexList;
+        int[] fileIndexList = file.fileIndexList;
         int start = 0;
-        int end = fileIndexList.size() - 1;
+        int end = fileIndexList.length - 1;
         while (start < end) {
             int index = (start + end) / 2;
-            int t = fileIndexList.get(index);
+            int t = fileIndexList[index];
             if (t < tMin) {
                 start = index + 1;
             } else {
@@ -311,7 +311,7 @@ public class LsmMessageStoreImpl extends MessageStore {
 
         FileChannel channel = raf.getChannel();
         ByteBuffer buffer = ByteBuffer.allocateDirect(WRITE_BUFFER_SIZE);
-        List<Integer> fileIndexList = new ArrayList<>(MAX_MEM_TABLE_SIZE / SST_FILE_INDEX_RATE);
+        int[] fileIndexList = new int[(frozenMemTable.size() - 1) / SST_FILE_INDEX_RATE + 1];
         int writeCount = 0;
         int writeBytes = 0;
 
@@ -331,7 +331,7 @@ public class LsmMessageStoreImpl extends MessageStore {
             buffer.putInt((int) msg.getA());
             buffer.put(msg.getBody());
             if (writeCount % SST_FILE_INDEX_RATE == 0) {
-                fileIndexList.add((int) msg.getT());
+                fileIndexList[writeCount / SST_FILE_INDEX_RATE] = (int) msg.getT();
             }
             writeCount++;
         }
@@ -351,7 +351,7 @@ public class LsmMessageStoreImpl extends MessageStore {
         if (fileId % PERSIST_SAMPLE_RATE == 0) {
             logger.info("Done persisting memTable to file: " + fileName
                     + ", written msgs: " + writeCount + ", written bytes: " + writeBytes
-                    + ", index size: " + fileIndexList.size() + ", time: " + (System.currentTimeMillis() - persistStart));
+                    + ", index size: " + fileIndexList.length + ", time: " + (System.currentTimeMillis() - persistStart));
         }
     }
 
@@ -363,9 +363,9 @@ public class LsmMessageStoreImpl extends MessageStore {
         long tEnd = 0;
         int size = 0;
         int msgs = 0;
-        List<Integer> fileIndexList;
+        int[] fileIndexList;
 
-        SSTableFile(int id, RandomAccessFile file, FileChannel channel, long tStart, long tEnd, List<Integer> fileIndexList) {
+        SSTableFile(int id, RandomAccessFile file, FileChannel channel, long tStart, long tEnd, int[] fileIndexList) {
             this.id = id;
             this.file = file;
             this.channel = channel;

@@ -22,7 +22,7 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     private static final int MAX_MEM_TABLE_SIZE = 100000;
 
-    private static final int SST_FILE_INDEX_RATE = 32;
+    private static final int SST_FILE_INDEX_RATE = 4;
 
     private static final int WRITE_BUFFER_SIZE = Constants.MSG_BYTE_LENGTH * 1000;
     private static final int READ_BUFFER_SIZE = Constants.MSG_BYTE_LENGTH * 1000;
@@ -76,7 +76,7 @@ public class LsmMessageStoreImpl extends MessageStore {
             conflictMessage = memTable.put(key, message);
         }
         if (conflictMessage != null) {
-            logger.info("[WARN] Put conflict message back");
+//            logger.info("[WARN] Put conflict message back");
             put(conflictMessage);
         }
         if (putId % PUT_SAMPLE_RATE == 0) {
@@ -311,7 +311,7 @@ public class LsmMessageStoreImpl extends MessageStore {
 
         FileChannel channel = raf.getChannel();
         ByteBuffer buffer = ByteBuffer.allocateDirect(WRITE_BUFFER_SIZE);
-        List<Integer> fileIndexList = new ArrayList<>(MAX_MEM_TABLE_SIZE);
+        List<Integer> fileIndexList = new ArrayList<>(MAX_MEM_TABLE_SIZE / SST_FILE_INDEX_RATE);
         int writeCount = 0;
         int writeBytes = 0;
 

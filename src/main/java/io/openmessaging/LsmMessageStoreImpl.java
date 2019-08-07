@@ -57,9 +57,6 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     private List<SSTableFile> ssTableFileList = new ArrayList<>();
 
-    private ThreadLocal<ByteBuffer> threadBufferForT = ThreadLocal.withInitial(()
-            -> ByteBuffer.allocateDirect(Constants.KEY_BYTE_LENGTH));
-
     private ThreadLocal<ByteBuffer> threadBufferForMsg = ThreadLocal.withInitial(()
             -> ByteBuffer.allocateDirect(READ_BUFFER_SIZE));
 
@@ -161,6 +158,11 @@ public class LsmMessageStoreImpl extends MessageStore {
 
                     while (bufferForMsg.remaining() > 0) {
                         long t = bufferForMsg.getInt();
+                        if (t < tMin) {
+                            bufferForMsg.position(bufferForMsg.position()
+                                    + Constants.KEY_BYTE_LENGTH + Constants.BODY_BYTE_LENGTH);
+                            continue;
+                        }
                         if (t > tMax) {
                             allFound = true;
                             break;
@@ -222,6 +224,11 @@ public class LsmMessageStoreImpl extends MessageStore {
 
                     while (bufferForMsg.remaining() > 0) {
                         long t = bufferForMsg.getInt();
+                        if (t < tMin) {
+                            bufferForMsg.position(bufferForMsg.position()
+                                    + Constants.KEY_BYTE_LENGTH + Constants.BODY_BYTE_LENGTH);
+                            continue;
+                        }
                         if (t > tMax) {
                             allFound = true;
                             break;
@@ -247,23 +254,19 @@ public class LsmMessageStoreImpl extends MessageStore {
         if (tMin <= file.tStart) {
             return 0;
         }
+        List<Integer> fileIndexList = file.fileIndexList;
         int start = 0;
-        int end = file.msgs - 1;
-        ByteBuffer bufferForT = threadBufferForT.get();
-
+        int end = fileIndexList.size() - 1;
         while (start < end) {
             int index = (start + end) / 2;
-            file.channel.read(bufferForT, index * Constants.MSG_BYTE_LENGTH);
-            bufferForT.flip();
-            long t = bufferForT.getInt();
-            bufferForT.clear();
+            int t = fileIndexList.get(index);
             if (t < tMin) {
                 start = index + 1;
             } else {
                 end = index;
             }
         }
-        return start;
+        return start > 0 ? (start - 1) * SST_FILE_INDEX_RATE : 0;
     }
 
     private List<SSTableFile> findTargetFileList(long tMin, long tMax) {

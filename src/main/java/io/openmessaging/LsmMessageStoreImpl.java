@@ -26,6 +26,8 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     private static final int WRITE_BUFFER_SIZE = Constants.MSG_BYTE_LENGTH * 1000;
     private static final int READ_BUFFER_SIZE = Constants.MSG_BYTE_LENGTH * 1000;
+    private static final int WRITE_TA_BUFFER_SIZE = Constants.TA_BYTE_LENGTH * 1000;
+    private static final int READ_TA_BUFFER_SIZE = Constants.TA_BYTE_LENGTH * 1000;
 
     private static final int PERSIST_SAMPLE_RATE = 100;
     private static final int PUT_SAMPLE_RATE = 10000000;
@@ -57,8 +59,19 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     private List<SSTableFile> ssTableFileList = new ArrayList<>();
 
+    private List<SSTableFile> ssTableFileListTa = new ArrayList<>();
+
     private ThreadLocal<ByteBuffer> threadBufferForMsg = ThreadLocal.withInitial(()
             -> ByteBuffer.allocateDirect(READ_BUFFER_SIZE));
+
+    private ThreadLocal<ByteBuffer> threadBufferForMsgTa = ThreadLocal.withInitial(()
+            -> ByteBuffer.allocateDirect(READ_TA_BUFFER_SIZE));
+
+    private ThreadLocal<ByteBuffer> threadBufferForWrite = ThreadLocal.withInitial(()
+            -> ByteBuffer.allocateDirect(WRITE_BUFFER_SIZE));
+
+    private ThreadLocal<ByteBuffer> threadBufferForWriteTa = ThreadLocal.withInitial(()
+            -> ByteBuffer.allocateDirect(WRITE_TA_BUFFER_SIZE));
 
 //    private ThreadLocal<Message> threadMessagePool;
 
@@ -132,7 +145,7 @@ public class LsmMessageStoreImpl extends MessageStore {
             logger.info("All persist tasks has finished, time: " + (System.currentTimeMillis() - getStart));
         }
 
-        List<SSTableFile> targetFileList = findTargetFileList(tMin, tMax);
+        List<SSTableFile> targetFileList = findTargetFileList(ssTableFileList, tMin, tMax);
         if (getId % GET_SAMPLE_RATE == 0) {
             logger.info("Found target files list: " + targetFileList.stream().map(s -> s.id).collect(Collectors.toList())
                     + ", time: " + (System.currentTimeMillis() - getStart) + ", getId: " + getId);
@@ -212,14 +225,16 @@ public class LsmMessageStoreImpl extends MessageStore {
         long sum = 0;
         long count = 0;
 
-        List<SSTableFile> targetFileList = findTargetFileList(tMin, tMax);
-        ByteBuffer bufferForMsg = threadBufferForMsg.get();
+        List<SSTableFile> targetFileList = findTargetFileList(ssTableFileListTa, tMin, tMax);
+//        ByteBuffer bufferForMsg = threadBufferForMsg.get();
+        ByteBuffer bufferForMsg = threadBufferForMsgTa.get();
 
         for (SSTableFile file : targetFileList) {
             FileChannel fileChannel = file.channel;
             try {
                 int index = findStartIndex(file, tMin, tMax);
-                int offset = index * Constants.MSG_BYTE_LENGTH;
+//                int offset = index * Constants.MSG_BYTE_LENGTH;
+                int offset = index * Constants.TA_BYTE_LENGTH;
                 boolean allFound = false;
 
                 while (!allFound && offset < file.size) {
@@ -230,7 +245,8 @@ public class LsmMessageStoreImpl extends MessageStore {
                         long t = bufferForMsg.getInt();
                         if (t < tMin) {
                             bufferForMsg.position(bufferForMsg.position()
-                                    + Constants.KEY_BYTE_LENGTH + Constants.BODY_BYTE_LENGTH);
+//                                    + Constants.KEY_BYTE_LENGTH + Constants.BODY_BYTE_LENGTH);
+                                    + Constants.KEY_BYTE_LENGTH);
                             continue;
                         }
                         if (t > tMax) {
@@ -242,7 +258,7 @@ public class LsmMessageStoreImpl extends MessageStore {
                             sum += a;
                             count++;
                         }
-                        bufferForMsg.position(bufferForMsg.position() + Constants.BODY_BYTE_LENGTH);
+//                        bufferForMsg.position(bufferForMsg.position() + Constants.BODY_BYTE_LENGTH);
                     }
                     bufferForMsg.clear();
                 }
@@ -273,14 +289,14 @@ public class LsmMessageStoreImpl extends MessageStore {
         return start > 0 ? (start - 1) * SST_FILE_INDEX_RATE : 0;
     }
 
-    private List<SSTableFile> findTargetFileList(long tMin, long tMax) {
+    private List<SSTableFile> findTargetFileList(List<SSTableFile> sourceFileList, long tMin, long tMax) {
         List<SSTableFile> targetFileList = new ArrayList<>();
         int index;
         int start = 0;
-        int end = ssTableFileList.size() - 1;
+        int end = sourceFileList.size() - 1;
         while (start < end) {
             index = (start + end) / 2;
-            long fileEnd = ssTableFileList.get(index).tEnd;
+            long fileEnd = sourceFileList.get(index).tEnd;
             if (fileEnd < tMin) {
                 start = index + 1;
             } else {
@@ -288,8 +304,8 @@ public class LsmMessageStoreImpl extends MessageStore {
             }
         }
         index = start;
-        for (int i = index; i < Math.min(i + 10, ssTableFileList.size()); i++) {
-            SSTableFile file = ssTableFileList.get(i);
+        for (int i = index; i < Math.min(i + 10, sourceFileList.size()); i++) {
+            SSTableFile file = sourceFileList.get(i);
             if (tMax >= file.tStart && tMin <= file.tEnd) {
                 targetFileList.add(file);
             }
@@ -305,16 +321,23 @@ public class LsmMessageStoreImpl extends MessageStore {
             logger.info("Start persisting memTable to file: " + fileName);
         }
 
+        String fileNameTa = Constants.DATA_DIR+ "ssta" + fileId + ".data";
+
         RandomAccessFile raf = null;
+        RandomAccessFile rafTa = null;
         try {
             raf = new RandomAccessFile(fileName, "rw");
+            rafTa = new RandomAccessFile(fileNameTa, "rw");
         } catch (FileNotFoundException e) {
             logger.info("[ERROR] File not found", e);
             throw new RuntimeException(e);
         }
 
+        ByteBuffer buffer = threadBufferForWrite.get();
+        ByteBuffer bufferTa = threadBufferForWriteTa.get();
+
         FileChannel channel = raf.getChannel();
-        ByteBuffer buffer = ByteBuffer.allocateDirect(WRITE_BUFFER_SIZE);
+        FileChannel channelTa = rafTa.getChannel();
         int[] fileIndexList = new int[(frozenMemTable.size() - 1) / SST_FILE_INDEX_RATE + 1];
         int writeCount = 0;
         int writeBytes = 0;
@@ -331,9 +354,20 @@ public class LsmMessageStoreImpl extends MessageStore {
                 }
                 buffer.clear();
             }
+            if (bufferTa.remaining() < Constants.TA_BYTE_LENGTH) {
+                bufferTa.flip();
+                try {
+                    channelTa.write(bufferTa);
+                } catch (IOException e) {
+                    logger.info("[ERROR] Write to channel failed: " + e.getMessage());
+                }
+                bufferTa.clear();
+            }
             buffer.putInt((int) msg.getT());
             buffer.putInt((int) msg.getA());
             buffer.put(msg.getBody());
+            bufferTa.putInt((int) msg.getT());
+            bufferTa.putInt((int) msg.getA());
             if (writeCount % SST_FILE_INDEX_RATE == 0) {
                 fileIndexList[writeCount / SST_FILE_INDEX_RATE] = (int) msg.getT();
             }
@@ -348,8 +382,18 @@ public class LsmMessageStoreImpl extends MessageStore {
             logger.info("ERROR write to file channel: " + e.getMessage());
         }
         buffer.clear();
+        bufferTa.flip();
+        try {
+            channelTa.write(bufferTa);
+        } catch (IOException e) {
+            logger.info("ERROR write to file channel: " + e.getMessage());
+        }
+        bufferTa.clear();
 
         ssTableFileList.add(new SSTableFile(fileId, raf, channel, frozenMemTable.firstEntry().getValue().getT(),
+                frozenMemTable.lastEntry().getValue().getT(), fileIndexList));
+
+        ssTableFileListTa.add(new SSTableFile(fileId, rafTa, channelTa, frozenMemTable.firstEntry().getValue().getT(),
                 frozenMemTable.lastEntry().getValue().getT(), fileIndexList));
 
         if (fileId % PERSIST_SAMPLE_RATE == 0) {

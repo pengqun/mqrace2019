@@ -22,6 +22,8 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     private static final int MAX_MEM_TABLE_SIZE = 100000;
 
+    private static final int SST_FILE_INDEX_RATE = 4;
+
     private static final int WRITE_BUFFER_SIZE = Constants.MSG_BYTE_LENGTH * 1000;
     private static final int READ_BUFFER_SIZE = Constants.MSG_BYTE_LENGTH * 1000;
 
@@ -140,30 +142,11 @@ public class LsmMessageStoreImpl extends MessageStore {
         }
 
         ArrayList<Message> result = new ArrayList<>(1024);
-        ByteBuffer bufferForT = threadBufferForT.get();
         ByteBuffer bufferForMsg = threadBufferForMsg.get();
 
         for (SSTableFile file : targetFileList) {
-            FileChannel fileChannel = file.channel;
             try {
-                int index = 0;
-                if (tMin > file.tStart) {
-                    int start = 0;
-                    int end = file.msgs - 1;
-                    while (start < end) {
-                        index = (start + end) / 2;
-                        fileChannel.read(bufferForT, index * Constants.MSG_BYTE_LENGTH);
-                        bufferForT.flip();
-                        long t = bufferForT.getInt();
-                        bufferForT.clear();
-                        if (t < tMin) {
-                            start = index + 1;
-                        } else {
-                            end = index;
-                        }
-                    }
-                    index = start;
-                }
+                int index = findStartIndex(file, tMin, tMax);
                 if (getId % GET_SAMPLE_RATE == 0) {
                     logger.info("Found index: " + index + " for file: " + file.id
                             + ", time: " + (System.currentTimeMillis() - getStart) + ", getId: " + getId);
@@ -173,7 +156,7 @@ public class LsmMessageStoreImpl extends MessageStore {
                 boolean allFound = false;
 
                 while (!allFound && offset < file.size) {
-                    offset += fileChannel.read(bufferForMsg, offset);
+                    offset += file.channel.read(bufferForMsg, offset);
                     bufferForMsg.flip();
 
                     while (bufferForMsg.remaining() > 0) {
@@ -224,32 +207,12 @@ public class LsmMessageStoreImpl extends MessageStore {
         long count = 0;
 
         List<SSTableFile> targetFileList = findTargetFileList(tMin, tMax);
-
-        ByteBuffer bufferForT = threadBufferForT.get();
         ByteBuffer bufferForMsg = threadBufferForMsg.get();
 
         for (SSTableFile file : targetFileList) {
             FileChannel fileChannel = file.channel;
             try {
-                int index = 0;
-                if (tMin > file.tStart) {
-                    int start = 0;
-                    int end = file.msgs - 1;
-                    while (start < end) {
-                        index = (start + end) / 2;
-                        fileChannel.read(bufferForT, index * Constants.MSG_BYTE_LENGTH);
-                        bufferForT.flip();
-                        long t = bufferForT.getInt();
-                        bufferForT.clear();
-                        if (t < tMin) {
-                            start = index + 1;
-                        } else {
-                            end = index;
-                        }
-                    }
-                    index = start;
-                }
-
+                int index = findStartIndex(file, tMin, tMax);
                 int offset = index * Constants.MSG_BYTE_LENGTH;
                 boolean allFound = false;
 
@@ -278,6 +241,29 @@ public class LsmMessageStoreImpl extends MessageStore {
         }
 
         return count == 0 ? 0 : sum / count;
+    }
+
+    private int findStartIndex(SSTableFile file, long tMin, long tMax) throws IOException {
+        if (tMin <= file.tStart) {
+            return 0;
+        }
+        int start = 0;
+        int end = file.msgs - 1;
+        ByteBuffer bufferForT = threadBufferForT.get();
+
+        while (start < end) {
+            int index = (start + end) / 2;
+            file.channel.read(bufferForT, index * Constants.MSG_BYTE_LENGTH);
+            bufferForT.flip();
+            long t = bufferForT.getInt();
+            bufferForT.clear();
+            if (t < tMin) {
+                start = index + 1;
+            } else {
+                end = index;
+            }
+        }
+        return start;
     }
 
     private List<SSTableFile> findTargetFileList(long tMin, long tMax) {
@@ -322,6 +308,7 @@ public class LsmMessageStoreImpl extends MessageStore {
 
         FileChannel channel = raf.getChannel();
         ByteBuffer buffer = ByteBuffer.allocateDirect(WRITE_BUFFER_SIZE);
+        List<Integer> fileIndexList = new ArrayList<>(MAX_MEM_TABLE_SIZE);
         int writeCount = 0;
         int writeBytes = 0;
 
@@ -340,6 +327,9 @@ public class LsmMessageStoreImpl extends MessageStore {
             buffer.putInt((int) msg.getT());
             buffer.putInt((int) msg.getA());
             buffer.put(msg.getBody());
+            if (writeCount % SST_FILE_INDEX_RATE == 0) {
+                fileIndexList.add((int) msg.getT());
+            }
             writeCount++;
         }
 
@@ -353,12 +343,12 @@ public class LsmMessageStoreImpl extends MessageStore {
         buffer.clear();
 
         ssTableFileList.add(new SSTableFile(fileId, raf, channel, frozenMemTable.firstEntry().getValue().getT(),
-                frozenMemTable.lastEntry().getValue().getT()));
+                frozenMemTable.lastEntry().getValue().getT(), fileIndexList));
 
         if (fileId % PERSIST_SAMPLE_RATE == 0) {
             logger.info("Done persisting memTable to file: " + fileName
                     + ", written msgs: " + writeCount + ", written bytes: " + writeBytes
-                    + ", time: " + (System.currentTimeMillis() - persistStart));
+                    + ", index size: " + fileIndexList.size() + ", time: " + (System.currentTimeMillis() - persistStart));
         }
     }
 
@@ -370,8 +360,9 @@ public class LsmMessageStoreImpl extends MessageStore {
         long tEnd = 0;
         int size = 0;
         int msgs = 0;
+        List<Integer> fileIndexList;
 
-        SSTableFile(int id, RandomAccessFile file, FileChannel channel, long tStart, long tEnd) {
+        SSTableFile(int id, RandomAccessFile file, FileChannel channel, long tStart, long tEnd, List<Integer> fileIndexList) {
             this.id = id;
             this.file = file;
             this.channel = channel;
@@ -383,6 +374,7 @@ public class LsmMessageStoreImpl extends MessageStore {
             } catch (IOException e) {
                 e.printStackTrace();
             }
+            this.fileIndexList = fileIndexList;
         }
     }
 

@@ -3,6 +3,7 @@ package io.openmessaging;
 
 import org.apache.log4j.Logger;
 
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -26,9 +27,16 @@ public class TestMessageStoreImpl extends MessageStore {
     private long totalNegDiff = 0;
     private long negDiffCount = 0;
 
-    private short[] msgCounter = new short[1100000000];
+//    private short[] msgCounter = new short[1100000000];
     private int minRepeat = Integer.MAX_VALUE;
     private int maxRepeat = Integer.MIN_VALUE;
+
+    private int[] accumCounter = new int[800 * 1024 * 1024];
+    private int minAccum = Integer.MAX_VALUE;
+    private int maxAccum = Integer.MIN_VALUE;
+
+    ByteBuffer byteBuffer = ByteBuffer.allocateDirect(1024 * 1024 * 1024);
+    ByteBuffer byteBuffer2 = ByteBuffer.allocateDirect(1024 * 1024 * 1024);
 
     @Override
     public synchronized void put(Message message) {
@@ -52,10 +60,16 @@ public class TestMessageStoreImpl extends MessageStore {
             negDiffCount++;
         }
 
-        msgCounter[(int) message.getT()]++;
+//        msgCounter[(int) message.getT()]++;
+//        minRepeat = Math.min(minRepeat, msgCounter[(int) message.getT()]);
+//        maxRepeat = Math.max(maxRepeat, msgCounter[(int) message.getT()]);
 
-        minRepeat = Math.min(minRepeat, msgCounter[(int) message.getT()]);
-        maxRepeat = Math.max(maxRepeat, msgCounter[(int) message.getT()]);
+        int t = (int) message.getT();
+        if (t < accumCounter.length) {
+            accumCounter[t] += message.getA();
+            minAccum = Math.min(minAccum, accumCounter[t]);
+            maxAccum = Math.max(maxAccum, accumCounter[t]);
+        }
     }
 
     @Override
@@ -68,6 +82,7 @@ public class TestMessageStoreImpl extends MessageStore {
                 + ", avgPosDiff - " + (posDiffCount > 0 ? totalPosDiff / posDiffCount : 0)
                 + ", avgNegDiff - " + (negDiffCount > 0 ? totalNegDiff / negDiffCount : 0)
                 + ", minRepeat - " + minRepeat + ", maxRepeat - " + maxRepeat
+                + ", minAccum - " + minAccum + ", maxAccum - " + maxAccum
         );
 
         ArrayList<Message> res = new ArrayList<Message>();

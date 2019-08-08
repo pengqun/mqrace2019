@@ -218,8 +218,11 @@ public class LsmMessageStoreImpl extends MessageStore {
             }
         }
 
-        result.sort((o1, o2) -> (int) (o1.getT() - o2.getT()));
+        if (targetFileList.size() > 1) {
+            result.sort((o1, o2) -> (int) (o1.getT() - o2.getT()));
+        }
 //        printGetResult(result);
+
         if (IS_TEST_RUN) {
             getMsgCounter.addAndGet(result.size());
         }

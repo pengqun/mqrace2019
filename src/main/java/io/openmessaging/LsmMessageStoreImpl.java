@@ -9,7 +9,10 @@ import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.util.*;
-import java.util.concurrent.*;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
@@ -28,10 +31,10 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     private static final int SST_FILE_INDEX_RATE = 16;
 
-    private static final int WRITE_BUFFER_SIZE = Constants.MSG_BYTE_LENGTH * 1000;
-    private static final int READ_BUFFER_SIZE = Constants.MSG_BYTE_LENGTH * 1000;
-    private static final int WRITE_TA_BUFFER_SIZE = Constants.TA_BYTE_LENGTH * 1000;
-    private static final int READ_TA_BUFFER_SIZE = Constants.TA_BYTE_LENGTH * 1000;
+    private static final int WRITE_BUFFER_SIZE = Constants.MSG_BYTE_LENGTH * 1024;
+    private static final int READ_BUFFER_SIZE = Constants.MSG_BYTE_LENGTH * 1024;
+    private static final int WRITE_TA_BUFFER_SIZE = Constants.TA_BYTE_LENGTH * 1024;
+    private static final int READ_TA_BUFFER_SIZE = Constants.TA_BYTE_LENGTH * 1024;
 
     private static final int PERSIST_SAMPLE_RATE = 100;
     private static final int PUT_SAMPLE_RATE = 10000000;
@@ -65,14 +68,14 @@ public class LsmMessageStoreImpl extends MessageStore {
     private List<SSTableFile> ssTableFileListTa = new ArrayList<>();
 
     private ThreadLocal<ByteBuffer> threadBufferForMsg = ThreadLocal.withInitial(()
-            -> ByteBuffer.allocateDirect(READ_BUFFER_SIZE));
+            -> ByteBuffer.allocate(READ_BUFFER_SIZE));
     private ThreadLocal<ByteBuffer> threadBufferForMsgTa = ThreadLocal.withInitial(()
-            -> ByteBuffer.allocateDirect(READ_TA_BUFFER_SIZE));
+            -> ByteBuffer.allocate(READ_TA_BUFFER_SIZE));
 
     private ThreadLocal<ByteBuffer> threadBufferForWrite = ThreadLocal.withInitial(()
-            -> ByteBuffer.allocateDirect(WRITE_BUFFER_SIZE));
+            -> ByteBuffer.allocate(WRITE_BUFFER_SIZE));
     private ThreadLocal<ByteBuffer> threadBufferForWriteTa = ThreadLocal.withInitial(()
-            -> ByteBuffer.allocateDirect(WRITE_TA_BUFFER_SIZE));
+            -> ByteBuffer.allocate(WRITE_TA_BUFFER_SIZE));
 
     private AtomicLong getMsgCounter = new AtomicLong(0);
     private AtomicLong avgMsgCounter = new AtomicLong(0);

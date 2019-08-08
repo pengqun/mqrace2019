@@ -11,7 +11,11 @@ import java.nio.channels.FileChannel;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
+
+import static io.openmessaging.Constants.IS_TEST_RUN;
+import static io.openmessaging.Constants.TEST_BOUNDARY;
 
 /**
  * @author .ignore 2019-07-29
@@ -27,7 +31,7 @@ public class LsmMessageStoreImpl extends MessageStore {
     private static final int WRITE_BUFFER_SIZE = Constants.MSG_BYTE_LENGTH * 1000;
     private static final int READ_BUFFER_SIZE = Constants.MSG_BYTE_LENGTH * 1000;
     private static final int WRITE_TA_BUFFER_SIZE = Constants.TA_BYTE_LENGTH * 1000;
-    private static final int READ_TA_BUFFER_SIZE = Constants.TA_BYTE_LENGTH * 1000;
+    private static final int READ_TA_BUFFER_SIZE = Constants.TA_BYTE_LENGTH * 5000;
 
     private static final int PERSIST_SAMPLE_RATE = 100;
     private static final int PUT_SAMPLE_RATE = 10000000;
@@ -58,30 +62,36 @@ public class LsmMessageStoreImpl extends MessageStore {
     private AtomicInteger avgCounter = new AtomicInteger(0);
 
     private List<SSTableFile> ssTableFileList = new ArrayList<>();
-
     private List<SSTableFile> ssTableFileListTa = new ArrayList<>();
 
     private ThreadLocal<ByteBuffer> threadBufferForMsg = ThreadLocal.withInitial(()
             -> ByteBuffer.allocateDirect(READ_BUFFER_SIZE));
-
     private ThreadLocal<ByteBuffer> threadBufferForMsgTa = ThreadLocal.withInitial(()
             -> ByteBuffer.allocateDirect(READ_TA_BUFFER_SIZE));
 
     private ThreadLocal<ByteBuffer> threadBufferForWrite = ThreadLocal.withInitial(()
             -> ByteBuffer.allocateDirect(WRITE_BUFFER_SIZE));
-
     private ThreadLocal<ByteBuffer> threadBufferForWriteTa = ThreadLocal.withInitial(()
             -> ByteBuffer.allocateDirect(WRITE_TA_BUFFER_SIZE));
 
-//    private ThreadLocal<Message> threadMessagePool;
+    private AtomicLong getMsgCounter = new AtomicLong(0);
+    private AtomicLong avgMsgCounter = new AtomicLong(0);
+    private long _putStart = 0;
+    private long _putEnd = 0;
+    private long _getStart = 0;
+    private long _getEnd = 0;
+    private long _avgStart = 0;
 
     @Override
     public void put(Message message) {
+        long putStart = System.currentTimeMillis();
         int putId = putCounter.getAndIncrement();
+        if (IS_TEST_RUN && putId == 0) {
+            _putStart = System.currentTimeMillis();
+        }
         if (putId % PUT_SAMPLE_RATE == 0) {
             logger.info("putMessage - t: " + message.getT() + ", a: " + message.getA() + ", putId: " + putId);
         }
-        long putStart = System.currentTimeMillis();
         long key = (message.getT() << 32) + ThreadLocalRandom.current().nextInt(Integer.MAX_VALUE);
 
         Message conflictMessage;
@@ -112,6 +122,10 @@ public class LsmMessageStoreImpl extends MessageStore {
     public List<Message> getMessage(long aMin, long aMax, long tMin, long tMax) {
         long getStart = System.currentTimeMillis();
         int getId = getCounter.getAndIncrement();
+        if (IS_TEST_RUN && getId == 0) {
+            _putEnd = System.currentTimeMillis();
+            _getStart = _putEnd;
+        }
         if (getId % GET_SAMPLE_RATE == 0) {
             logger.info("getMessage - tMin: " + tMin + ", tMax: " + tMax
                     + ", aMin: " + aMin + ", aMax: " + aMax + ", getId: " + getId);
@@ -203,7 +217,9 @@ public class LsmMessageStoreImpl extends MessageStore {
 
         result.sort((o1, o2) -> (int) (o1.getT() - o2.getT()));
 //        printGetResult(result);
-
+        if (IS_TEST_RUN) {
+            getMsgCounter.addAndGet(result.size());
+        }
         if (getId % GET_SAMPLE_RATE == 0) {
             logger.info("Return sorted result with size: " + result.size()
                     + ", time: " + (System.currentTimeMillis() - getStart) + ", getId: " + getId);
@@ -213,27 +229,52 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     @Override
     public long getAvgValue(long aMin, long aMax, long tMin, long tMax) {
+        long avgStart = System.currentTimeMillis();
         int avgId = avgCounter.getAndIncrement();
-//        if (avgId % AVG_SAMPLE_RATE == 0 || avgId < 1000) {
+        if (IS_TEST_RUN && avgId == 0) {
+            _getEnd = System.currentTimeMillis();
+            _avgStart = _getEnd;
+        }
         if (avgId % AVG_SAMPLE_RATE == 0) {
             logger.info("getAvgValue - tMin: " + tMin + ", tMax: " + tMax
-                    + ", aMin: " + aMin + ", aMax: " + aMax + ", getId: " + avgId);
-//            if (avgId == 30000) {
-//                throw new RuntimeException("Abort!");
-//            }
+                    + ", aMin: " + aMin + ", aMax: " + aMax + ", avgId: " + avgId);
+            if (IS_TEST_RUN && avgId == TEST_BOUNDARY) {
+                long putDuration = _putEnd - _putStart;
+                long getDuration = _getEnd - _getStart;
+                long avgDuration = System.currentTimeMillis() - _avgStart;
+                int putScore = (int) (putCounter.get() / putDuration);
+                int getScore = (int) (getMsgCounter.get() / getDuration);
+                int avgScore = (int) (avgMsgCounter.get() / avgDuration);
+                int totalScore = putScore + getScore + avgScore;
+                logger.info("Test result: \n"
+                        + "\tput: " + putCounter.get() + " / " + putDuration + "ms = " + putScore + "\n"
+                        + "\tget: " + getMsgCounter.get() + " / " + getDuration + "ms = " + getScore + "\n"
+                        + "\tavg: " + avgMsgCounter.get() + " / " + avgDuration + "ms = " + avgScore + "\n"
+                        + "\ttotal: " + totalScore + "\n"
+                );
+                throw new RuntimeException("Abort with score: " + totalScore);
+            }
         }
         long sum = 0;
         long count = 0;
 
         List<SSTableFile> targetFileList = findTargetFileList(ssTableFileListTa, tMin, tMax);
-//        ByteBuffer bufferForMsg = threadBufferForMsg.get();
+        if (avgId % AVG_SAMPLE_RATE == 0) {
+            logger.info("Found target files list: " + targetFileList.stream().map(s -> s.id).collect(Collectors.toList())
+                    + ", time: " + (System.currentTimeMillis() - avgStart) + ", avgId: " + avgId);
+        }
+
         ByteBuffer bufferForMsg = threadBufferForMsgTa.get();
 
         for (SSTableFile file : targetFileList) {
             FileChannel fileChannel = file.channel;
             try {
                 int index = findStartIndex(file, tMin, tMax);
-//                int offset = index * Constants.MSG_BYTE_LENGTH;
+                if (avgId % AVG_SAMPLE_RATE == 0) {
+                    logger.info("Found index: " + index + " for file: " + file.id
+                            + ", time: " + (System.currentTimeMillis() - avgStart) + ", avgId: " + avgId);
+                }
+
                 int offset = index * Constants.TA_BYTE_LENGTH;
                 boolean allFound = false;
 
@@ -244,9 +285,7 @@ public class LsmMessageStoreImpl extends MessageStore {
                     while (bufferForMsg.remaining() > 0) {
                         long t = bufferForMsg.getInt();
                         if (t < tMin) {
-                            bufferForMsg.position(bufferForMsg.position()
-//                                    + Constants.KEY_BYTE_LENGTH + Constants.BODY_BYTE_LENGTH);
-                                    + Constants.KEY_BYTE_LENGTH);
+                            bufferForMsg.position(bufferForMsg.position() + Constants.KEY_BYTE_LENGTH);
                             continue;
                         }
                         if (t > tMax) {
@@ -258,15 +297,21 @@ public class LsmMessageStoreImpl extends MessageStore {
                             sum += a;
                             count++;
                         }
-//                        bufferForMsg.position(bufferForMsg.position() + Constants.BODY_BYTE_LENGTH);
                     }
                     bufferForMsg.clear();
+                }
+                if (avgId % GET_SAMPLE_RATE == 0) {
+                    logger.info("Found total " + count + " msgs for file: " + file.id
+                            + ", time: " + (System.currentTimeMillis() - avgStart) + ", avgId: " + avgId);
                 }
             } catch (IOException e) {
                 e.printStackTrace();
             }
         }
 
+        if (IS_TEST_RUN) {
+            avgMsgCounter.addAndGet((int) count);
+        }
         return count == 0 ? 0 : sum / count;
     }
 

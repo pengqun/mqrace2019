@@ -31,15 +31,10 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     private static final int SST_FILE_INDEX_RATE = 32;
 
-//    private static final int WRITE_BUFFER_SIZE = Constants.MSG_BYTE_LENGTH * 1024;
-//    private static final int READ_BUFFER_SIZE = Constants.MSG_BYTE_LENGTH * 1024;
-//    private static final int WRITE_TA_BUFFER_SIZE = Constants.TA_BYTE_LENGTH * 1024;
-//    private static final int READ_TA_BUFFER_SIZE = Constants.TA_BYTE_LENGTH * 1024;
-
-    private static final int WRITE_BUFFER_SIZE = 8192;
-    private static final int READ_BUFFER_SIZE = 8192;
-    private static final int WRITE_TA_BUFFER_SIZE = 8192;
-    private static final int READ_TA_BUFFER_SIZE = 8192;
+    private static final int WRITE_BUFFER_SIZE = Constants.MSG_BYTE_LENGTH * 1024;
+    private static final int READ_BUFFER_SIZE = Constants.MSG_BYTE_LENGTH * 1024;
+    private static final int WRITE_TA_BUFFER_SIZE = Constants.TA_BYTE_LENGTH * 1024;
+    private static final int READ_TA_BUFFER_SIZE = Constants.TA_BYTE_LENGTH * 1024;
 
     private static final int PERSIST_SAMPLE_RATE = 100;
     private static final int PUT_SAMPLE_RATE = 10000000;

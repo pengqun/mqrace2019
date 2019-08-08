@@ -8,7 +8,8 @@ class Constants {
     static final int TEST_BOUNDARY = 30000;
 //    static final String DATA_DIR = "/tmp/";
 //    static final int TEST_BOUNDARY = 9000;
-    static final boolean IS_TEST_RUN = true;
+//    static final boolean IS_TEST_RUN = true;
+    static final boolean IS_TEST_RUN = false;
 
     static final int KEY_BYTE_LENGTH = 4;
     static final int BODY_BYTE_LENGTH = 34;

@@ -10,7 +10,6 @@ import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.util.*;
 import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -30,6 +29,8 @@ public class LsmMessageStoreImpl extends MessageStore {
     private static final int MAX_MEM_TABLE_SIZE = 100000;
 
     private static final int SST_FILE_INDEX_RATE = 32;
+
+    private static final int DIFF_A_BASE_OFFSET = 10000;
 
     private static final int WRITE_BUFFER_SIZE = Constants.MSG_BYTE_LENGTH * 1024;
     private static final int READ_BUFFER_SIZE = Constants.MSG_BYTE_LENGTH * 1024;
@@ -95,15 +96,11 @@ public class LsmMessageStoreImpl extends MessageStore {
         if (putId % PUT_SAMPLE_RATE == 0) {
             logger.info("putMessage - t: " + message.getT() + ", a: " + message.getA() + ", putId: " + putId);
         }
-        long key = (message.getT() << 32) + ThreadLocalRandom.current().nextInt(Integer.MAX_VALUE);
+//        long key = (message.getT() << 32) + ThreadLocalRandom.current().nextInt(Integer.MAX_VALUE);
+        long key = (message.getT() << 32) + putId;
 
-        Message conflictMessage;
         synchronized (this) {
-            conflictMessage = memTable.put(key, message);
-        }
-        if (conflictMessage != null) {
-//            logger.info("[WARN] Put conflict message back");
-            put(conflictMessage);
+            memTable.put(key, message);
         }
         if (putId % PUT_SAMPLE_RATE == 0) {
             logger.info("putMessage to memTable with key " + key + ", time: "
@@ -190,14 +187,14 @@ public class LsmMessageStoreImpl extends MessageStore {
                         long t = bufferForMsg.getInt();
                         if (t < tMin) {
                             bufferForMsg.position(bufferForMsg.position()
-                                    + Constants.KEY_BYTE_LENGTH + Constants.BODY_BYTE_LENGTH);
+                                    + Constants.KEY_A_BYTE_LENGTH + Constants.BODY_BYTE_LENGTH);
                             continue;
                         }
                         if (t > tMax) {
                             allFound = true;
                             break;
                         }
-                        long a = bufferForMsg.getInt();
+                        long a = bufferForMsg.getShort() + t + DIFF_A_BASE_OFFSET;
                         if (a >= aMin && a <= aMax) {
                             byte[] body = new byte[Constants.BODY_BYTE_LENGTH];
                             bufferForMsg.get(body);
@@ -291,14 +288,14 @@ public class LsmMessageStoreImpl extends MessageStore {
                     while (bufferForMsg.remaining() > 0) {
                         long t = bufferForMsg.getInt();
                         if (t < tMin) {
-                            bufferForMsg.position(bufferForMsg.position() + Constants.KEY_BYTE_LENGTH);
+                            bufferForMsg.position(bufferForMsg.position() + Constants.KEY_A_BYTE_LENGTH);
                             continue;
                         }
                         if (t > tMax) {
                             allFound = true;
                             break;
                         }
-                        long a = bufferForMsg.getInt();
+                        long a = bufferForMsg.getShort() + t + DIFF_A_BASE_OFFSET;
                         if (a >= aMin && a <= aMax) {
                             sum += a;
                             count++;
@@ -374,8 +371,8 @@ public class LsmMessageStoreImpl extends MessageStore {
 
         String fileNameTa = Constants.DATA_DIR+ "ssta" + fileId + ".data";
 
-        RandomAccessFile raf = null;
-        RandomAccessFile rafTa = null;
+        RandomAccessFile raf;
+        RandomAccessFile rafTa;
         try {
             raf = new RandomAccessFile(fileName, "rw");
             rafTa = new RandomAccessFile(fileNameTa, "rw");
@@ -414,11 +411,14 @@ public class LsmMessageStoreImpl extends MessageStore {
                 }
                 bufferTa.clear();
             }
-            buffer.putInt((int) msg.getT());
-            buffer.putInt((int) msg.getA());
+            int t = (int) msg.getT();
+            short a = (short) (msg.getA() - msg.getT() - DIFF_A_BASE_OFFSET);
+
+            buffer.putInt(t);
+            buffer.putShort(a);
             buffer.put(msg.getBody());
-            bufferTa.putInt((int) msg.getT());
-            bufferTa.putInt((int) msg.getA());
+            bufferTa.putInt(t);
+            bufferTa.putShort(a);
             if (writeCount % SST_FILE_INDEX_RATE == 0) {
                 fileIndexList[writeCount / SST_FILE_INDEX_RATE] = (int) msg.getT();
             }

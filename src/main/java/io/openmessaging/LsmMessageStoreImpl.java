@@ -10,6 +10,7 @@ import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.util.*;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.PriorityBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -66,8 +67,6 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     private volatile NavigableMap<Long, Message> memTable = new TreeMap<>();
 
-    private volatile NavigableMap<Long, Message> lastFrozenTable = null;
-
     private ThreadPoolExecutor persistThreadPool = new ThreadPoolExecutor(1, 1,
             0L, TimeUnit.MILLISECONDS,
             new LinkedBlockingQueue<>());
@@ -84,6 +83,8 @@ public class LsmMessageStoreImpl extends MessageStore {
     private short[] tIndex = new short[T_INDEX_SIZE];
     private int[] tSummary = new int[T_INDEX_SIZE / T_INDEX_SUMMARY_RATE];
     private AtomicInteger aCounter = new AtomicInteger(0);
+
+    private PriorityBlockingQueue<Long> taBuffer = new PriorityBlockingQueue<>();
 
     private ThreadLocal<ByteBuffer> threadBufferForMsg = ThreadLocal.withInitial(()
             -> ByteBuffer.allocateDirect(READ_BUFFER_SIZE));
@@ -160,7 +161,7 @@ public class LsmMessageStoreImpl extends MessageStore {
             flushMemBuffer();
             sortSSTableList();
             persistDone = true;
-//            persistThreadPool.shutdown();
+            persistThreadPool.shutdown();
             printSSTableList();
             logger.info("Flushed all memTables, time: " + (System.currentTimeMillis() - getStart));
 //            persistThreadPool.execute(() -> buildMemoryIndex());
@@ -417,6 +418,8 @@ public class LsmMessageStoreImpl extends MessageStore {
                 fileIndexList[writeCount / SST_FILE_INDEX_RATE] = (int) msg.getT();
             }
             writeCount++;
+
+            taBuffer.add((((long) t << 32) + msg.getA()));
         }
 
         if (buffer.position() > 0) {
@@ -441,51 +444,11 @@ public class LsmMessageStoreImpl extends MessageStore {
                     + ", index size: " + fileIndexList.length + ", time: " + (System.currentTimeMillis() - persistStart));
         }
 
-        if (lastFrozenTable != null) {
-            int lastT = -1;
-            for (Map.Entry<Long, Message> entry : lastFrozenTable.entrySet()) {
-                Message msg = entry.getValue();
-                int t = (int) msg.getT();
-                if (t < minT) {
-                    tIndex[t]++;
-                    if (aByteBufferForWrite.remaining() < Constants.KEY_A_BYTE_LENGTH) {
-                        aByteBufferForWrite.flip();
-                        try {
-                            aFile.getChannel().write(aByteBufferForWrite);
-                        } catch (IOException e) {
-                            logger.info("[ERROR] Write to channel failed: " + e.getMessage());
-                        }
-                        aByteBufferForWrite.clear();
-                    }
-                    aByteBufferForWrite.putShort((short) (msg.getA() - t - DIFF_A_BASE_OFFSET));
-
-                    if (t != lastT && t % T_INDEX_SUMMARY_RATE == 0) {
-                        tSummary[t / T_INDEX_SUMMARY_RATE] = aCounter.get();
-                    }
-                    aCounter.getAndIncrement();
-                } else {
-                    frozenMemTable.put(entry.getKey(), msg);
-                }
-                lastT = t;
-            }
-            if (aByteBufferForWrite.position() > 0) {
-                aByteBufferForWrite.flip();
-                try {
-                    aFile.getChannel().write(aByteBufferForWrite);
-                } catch (IOException e) {
-                    logger.info("[ERROR] Write to channel failed: " + e.getMessage());
-                }
-                aByteBufferForWrite.clear();
-            }
-        }
-        lastFrozenTable = frozenMemTable;
-    }
-
-    private void flushMemBuffer() {
         int lastT = -1;
-        for (Map.Entry<Long, Message> entry : lastFrozenTable.entrySet()) {
-            Message msg = entry.getValue();
-            int t = (int) msg.getT();
+        while (!taBuffer.isEmpty() && taBuffer.peek() < (minT << 32)) {
+            long key = taBuffer.poll();
+            int t = (int) (key >> 32);
+            int a = (int) (key);
             tIndex[t]++;
             if (aByteBufferForWrite.remaining() < Constants.KEY_A_BYTE_LENGTH) {
                 aByteBufferForWrite.flip();
@@ -496,7 +459,33 @@ public class LsmMessageStoreImpl extends MessageStore {
                 }
                 aByteBufferForWrite.clear();
             }
-            aByteBufferForWrite.putShort((short) (msg.getA() - t - DIFF_A_BASE_OFFSET));
+            aByteBufferForWrite.putShort((short) (a - t - DIFF_A_BASE_OFFSET));
+
+            if (t != lastT && t % T_INDEX_SUMMARY_RATE == 0) {
+                tSummary[t / T_INDEX_SUMMARY_RATE] = aCounter.get();
+            }
+            aCounter.getAndIncrement();
+            lastT = t;
+        }
+    }
+
+    private void flushMemBuffer() {
+        int lastT = -1;
+        while (!taBuffer.isEmpty()) {
+            long key = taBuffer.poll();
+            int t = (int) (key >> 32);
+            int a = (int) (key);
+            tIndex[t]++;
+            if (aByteBufferForWrite.remaining() < Constants.KEY_A_BYTE_LENGTH) {
+                aByteBufferForWrite.flip();
+                try {
+                    aFile.getChannel().write(aByteBufferForWrite);
+                } catch (IOException e) {
+                    logger.info("[ERROR] Write to channel failed: " + e.getMessage());
+                }
+                aByteBufferForWrite.clear();
+            }
+            aByteBufferForWrite.putShort((short) (a - t - DIFF_A_BASE_OFFSET));
 
             if (t != lastT && t % T_INDEX_SUMMARY_RATE == 0) {
                 tSummary[t / T_INDEX_SUMMARY_RATE] = aCounter.get();

@@ -11,9 +11,7 @@ class Constants {
 //    static final boolean IS_TEST_RUN = true;
     static final boolean IS_TEST_RUN = false;
 
-    static final int KEY_T_BYTE_LENGTH = 4;
     static final int KEY_A_BYTE_LENGTH = 2;
     static final int BODY_BYTE_LENGTH = 34;
     static final int MSG_BYTE_LENGTH = 40;
-    static final int TA_BYTE_LENGTH = 6;
 }

@@ -16,12 +16,12 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
-import static io.openmessaging.Constants.IS_TEST_RUN;
-import static io.openmessaging.Constants.TEST_BOUNDARY;
+import static io.openmessaging.Constants.*;
 
 /**
  * @author .ignore 2019-07-29
  */
+@SuppressWarnings("DuplicatedCode")
 public class LsmMessageStoreImpl extends MessageStore {
 
     private static final Logger logger = Logger.getLogger(LsmMessageStoreImpl.class);
@@ -32,10 +32,14 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     private static final int DIFF_A_BASE_OFFSET = 10000;
 
+    private static final int T_INDEX_SIZE = 1024 * 1024 * 1024;
+    private static final int T_INDEX_SUMMARY_RATE = 32;
+
     private static final int WRITE_BUFFER_SIZE = Constants.MSG_BYTE_LENGTH * 1024;
     private static final int READ_BUFFER_SIZE = Constants.MSG_BYTE_LENGTH * 1024;
-    private static final int WRITE_TA_BUFFER_SIZE = Constants.TA_BYTE_LENGTH * 1024;
-    private static final int READ_TA_BUFFER_SIZE = Constants.TA_BYTE_LENGTH * 1024;
+
+    private static final int WRITE_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 1024;
+    private static final int READ_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 1024;
 
     private static final int PERSIST_SAMPLE_RATE = 100;
     private static final int PUT_SAMPLE_RATE = 10000000;
@@ -47,12 +51,22 @@ public class LsmMessageStoreImpl extends MessageStore {
 //    private static final int GET_SAMPLE_RATE = 10000000;
 //    private static final int AVG_SAMPLE_RATE = 10000000;
 
+    private static RandomAccessFile aFile;
+    private static ByteBuffer aByteBufferForWrite = ByteBuffer.allocateDirect(WRITE_A_BUFFER_SIZE);
+
     static {
         logger.info("LsmMessageStoreImpl loaded");
+
+        try {
+            aFile = new RandomAccessFile(Constants.DATA_DIR + "a.data", "rw");
+        } catch (FileNotFoundException e) {
+            e.printStackTrace();
+        }
     }
 
     private volatile NavigableMap<Long, Message> memTable = new TreeMap<>();
-//    private volatile NavigableMap<Long, Message> memTable = new ConcurrentSkipListMap<>();
+
+    private volatile NavigableMap<Long, Message> lastFrozenTable = null;
 
     private ThreadPoolExecutor persistThreadPool = new ThreadPoolExecutor(1, 1,
             0L, TimeUnit.MILLISECONDS,
@@ -66,17 +80,19 @@ public class LsmMessageStoreImpl extends MessageStore {
     private AtomicInteger avgCounter = new AtomicInteger(0);
 
     private List<SSTableFile> ssTableFileList = new ArrayList<>();
-    private List<SSTableFile> ssTableFileListTa = new ArrayList<>();
+
+    private short[] tIndex = new short[T_INDEX_SIZE];
+    private int[] tSummary = new int[T_INDEX_SIZE / T_INDEX_SUMMARY_RATE];
+    private AtomicInteger aCounter = new AtomicInteger(0);
 
     private ThreadLocal<ByteBuffer> threadBufferForMsg = ThreadLocal.withInitial(()
             -> ByteBuffer.allocateDirect(READ_BUFFER_SIZE));
-    private ThreadLocal<ByteBuffer> threadBufferForMsgTa = ThreadLocal.withInitial(()
-            -> ByteBuffer.allocateDirect(READ_TA_BUFFER_SIZE));
 
     private ThreadLocal<ByteBuffer> threadBufferForWrite = ThreadLocal.withInitial(()
             -> ByteBuffer.allocateDirect(WRITE_BUFFER_SIZE));
-    private ThreadLocal<ByteBuffer> threadBufferForWriteTa = ThreadLocal.withInitial(()
-            -> ByteBuffer.allocateDirect(WRITE_TA_BUFFER_SIZE));
+
+    private ThreadLocal<ByteBuffer> threadBufferForReadA = ThreadLocal.withInitial(()
+            -> ByteBuffer.allocateDirect(READ_A_BUFFER_SIZE));
 
     private AtomicLong getMsgCounter = new AtomicLong(0);
     private AtomicLong avgMsgCounter = new AtomicLong(0);
@@ -96,7 +112,6 @@ public class LsmMessageStoreImpl extends MessageStore {
         if (putId % PUT_SAMPLE_RATE == 0) {
             logger.info("putMessage - t: " + message.getT() + ", a: " + message.getA() + ", putId: " + putId);
         }
-//        long key = (message.getT() << 32) + ThreadLocalRandom.current().nextInt(Integer.MAX_VALUE);
         long key = (message.getT() << 32) + putId;
 
         synchronized (this) {
@@ -110,7 +125,6 @@ public class LsmMessageStoreImpl extends MessageStore {
         if ((putId + 1) % MAX_MEM_TABLE_SIZE == 0) {
 //            logger.info("Submit memTable persist task, putId: " + putId);
             NavigableMap<Long, Message> frozenMemTable = memTable;
-//            memTable = new ConcurrentSkipListMap<>();
             memTable = new TreeMap<>();
             persistThreadPool.execute(() -> persistMemTable(frozenMemTable));
 //            logger.info("Submitted memTable persist task, time: "
@@ -143,11 +157,13 @@ public class LsmMessageStoreImpl extends MessageStore {
             if (memTable.size() > 0) {
                 persistMemTable(memTable);
             }
+            flushMemBuffer();
             sortSSTableList();
             persistDone = true;
-            persistThreadPool.shutdown();
+//            persistThreadPool.shutdown();
             printSSTableList();
             logger.info("Flushed all memTables, time: " + (System.currentTimeMillis() - getStart));
+//            persistThreadPool.execute(() -> buildMemoryIndex());
         }
         while (!persistDone) {
             logger.info("Waiting for all persist tasks to finish");
@@ -238,6 +254,13 @@ public class LsmMessageStoreImpl extends MessageStore {
             _getEnd = System.currentTimeMillis();
             _avgStart = _getEnd;
         }
+        if (avgId != 0) {
+//            try {
+//                Thread.sleep(1000000);
+//            } catch (InterruptedException e) {
+//                e.printStackTrace();
+//            }
+        }
         if (avgId % AVG_SAMPLE_RATE == 0) {
             logger.info("getAvgValue - tMin: " + tMin + ", tMax: " + tMax
                     + ", aMin: " + aMin + ", aMax: " + aMax + ", avgId: " + avgId);
@@ -261,56 +284,45 @@ public class LsmMessageStoreImpl extends MessageStore {
         long sum = 0;
         long count = 0;
 
-        List<SSTableFile> targetFileList = findTargetFileList(ssTableFileListTa, tMin, tMax);
-        if (avgId % AVG_SAMPLE_RATE == 0) {
-            logger.info("Found target files list: " + targetFileList.stream().map(s -> s.id).collect(Collectors.toList())
-                    + ", time: " + (System.currentTimeMillis() - avgStart) + ", avgId: " + avgId);
+        int offset = tSummary[(int) (tMin / T_INDEX_SUMMARY_RATE)];
+        for (int t = (int) (tMin / T_INDEX_SUMMARY_RATE * T_INDEX_SUMMARY_RATE); t < tMin; t++) {
+            offset += tIndex[t];
         }
+        offset *= KEY_A_BYTE_LENGTH;
+//        logger.info("offset: " + offset);
 
-        ByteBuffer bufferForMsg = threadBufferForMsgTa.get();
+        ByteBuffer aByteBufferForRead = threadBufferForReadA.get();
+        aByteBufferForRead.clear();
+        aByteBufferForRead.flip();
 
-        for (SSTableFile file : targetFileList) {
-            FileChannel fileChannel = file.channel;
-            try {
-                int index = findStartIndex(file, tMin, tMax);
-                if (avgId % AVG_SAMPLE_RATE == 0) {
-                    logger.info("Found index: " + index + " for file: " + file.id
-                            + ", time: " + (System.currentTimeMillis() - avgStart) + ", avgId: " + avgId);
-                }
-
-                int offset = index * Constants.TA_BYTE_LENGTH;
-                boolean allFound = false;
-
-                while (!allFound && offset < file.size) {
-                    offset += fileChannel.read(bufferForMsg, offset);
-                    bufferForMsg.flip();
-
-                    while (bufferForMsg.remaining() > 0) {
-                        long t = bufferForMsg.getInt();
-                        if (t < tMin) {
-                            bufferForMsg.position(bufferForMsg.position() + Constants.KEY_A_BYTE_LENGTH);
-                            continue;
-                        }
-                        if (t > tMax) {
-                            allFound = true;
-                            break;
-                        }
-                        long a = bufferForMsg.getShort() + t + DIFF_A_BASE_OFFSET;
-                        if (a >= aMin && a <= aMax) {
-                            sum += a;
-                            count++;
-                        }
+        for (int t = (int) tMin; t <= tMax; t++) {
+            int aCount = tIndex[t];
+//            logger.info("tIndex on " + t + ": " + aCount);
+            while (aCount-- > 0) {
+                if (aByteBufferForRead.remaining() == 0) {
+                    int bytes = 0;
+                    try {
+                        aByteBufferForRead.clear();
+                        bytes = aFile.getChannel().read(aByteBufferForRead, offset);
+                        aByteBufferForRead.flip();
+                    } catch (IOException e) {
+                        e.printStackTrace();
                     }
-                    bufferForMsg.clear();
+                    offset += bytes;
                 }
-                if (avgId % GET_SAMPLE_RATE == 0) {
-                    logger.info("Found total " + count + " msgs for file: " + file.id
-                            + ", time: " + (System.currentTimeMillis() - avgStart) + ", avgId: " + avgId);
+                long a = aByteBufferForRead.getShort() + t + DIFF_A_BASE_OFFSET;
+//                logger.info("a: " + a);
+                if (a != t) {
+                    logger.error("t: " + t + ", a: " + a + ", pos: " + offset);
+                    throw new RuntimeException();
                 }
-            } catch (IOException e) {
-                e.printStackTrace();
+                if (a >= aMin && a <= aMax) {
+                    sum += a;
+                    count++;
+                }
             }
         }
+        aByteBufferForRead.clear();
 
         if (IS_TEST_RUN) {
             avgMsgCounter.addAndGet((int) count);
@@ -364,28 +376,21 @@ public class LsmMessageStoreImpl extends MessageStore {
     private void persistMemTable(NavigableMap<Long, Message> frozenMemTable) {
         long persistStart = System.currentTimeMillis();
         int fileId = fileCounter.getAndIncrement();
-        String fileName = Constants.DATA_DIR+ "sst" + fileId + ".data";
+        String fileName = Constants.DATA_DIR + "sst" + fileId + ".data";
         if (fileId % PERSIST_SAMPLE_RATE == 0) {
             logger.info("Start persisting memTable to file: " + fileName);
         }
 
-        String fileNameTa = Constants.DATA_DIR+ "ssta" + fileId + ".data";
-
         RandomAccessFile raf;
-        RandomAccessFile rafTa;
         try {
             raf = new RandomAccessFile(fileName, "rw");
-            rafTa = new RandomAccessFile(fileNameTa, "rw");
         } catch (FileNotFoundException e) {
             logger.info("[ERROR] File not found", e);
             throw new RuntimeException(e);
         }
 
         ByteBuffer buffer = threadBufferForWrite.get();
-        ByteBuffer bufferTa = threadBufferForWriteTa.get();
-
         FileChannel channel = raf.getChannel();
-        FileChannel channelTa = rafTa.getChannel();
         int[] fileIndexList = new int[(frozenMemTable.size() - 1) / SST_FILE_INDEX_RATE + 1];
         int writeCount = 0;
         int writeBytes = 0;
@@ -402,57 +407,154 @@ public class LsmMessageStoreImpl extends MessageStore {
                 }
                 buffer.clear();
             }
-            if (bufferTa.remaining() < Constants.TA_BYTE_LENGTH) {
-                bufferTa.flip();
-                try {
-                    channelTa.write(bufferTa);
-                } catch (IOException e) {
-                    logger.info("[ERROR] Write to channel failed: " + e.getMessage());
-                }
-                bufferTa.clear();
-            }
             int t = (int) msg.getT();
             short a = (short) (msg.getA() - msg.getT() - DIFF_A_BASE_OFFSET);
 
             buffer.putInt(t);
             buffer.putShort(a);
             buffer.put(msg.getBody());
-            bufferTa.putInt(t);
-            bufferTa.putShort(a);
             if (writeCount % SST_FILE_INDEX_RATE == 0) {
                 fileIndexList[writeCount / SST_FILE_INDEX_RATE] = (int) msg.getT();
             }
             writeCount++;
         }
 
-        buffer.flip();
-        try {
-            writeBytes += buffer.limit();
-            channel.write(buffer);
-        } catch (IOException e) {
-            logger.info("ERROR write to file channel: " + e.getMessage());
+        if (buffer.position() > 0) {
+            buffer.flip();
+            try {
+                writeBytes += buffer.limit();
+                channel.write(buffer);
+            } catch (IOException e) {
+                logger.info("ERROR write to file channel: " + e.getMessage());
+            }
+            buffer.clear();
         }
-        buffer.clear();
-        bufferTa.flip();
-        try {
-            channelTa.write(bufferTa);
-        } catch (IOException e) {
-            logger.info("ERROR write to file channel: " + e.getMessage());
-        }
-        bufferTa.clear();
 
-        ssTableFileList.add(new SSTableFile(fileId, raf, channel, frozenMemTable.firstEntry().getValue().getT(),
-                frozenMemTable.lastEntry().getValue().getT(), fileIndexList));
+        long minT = frozenMemTable.firstEntry().getValue().getT();
+        long maxT = frozenMemTable.lastEntry().getValue().getT();
 
-        ssTableFileListTa.add(new SSTableFile(fileId, rafTa, channelTa, frozenMemTable.firstEntry().getValue().getT(),
-                frozenMemTable.lastEntry().getValue().getT(), fileIndexList));
+        ssTableFileList.add(new SSTableFile(fileId, raf, channel, minT, maxT, fileIndexList));
 
         if (fileId % PERSIST_SAMPLE_RATE == 0) {
             logger.info("Done persisting memTable to file: " + fileName
                     + ", written msgs: " + writeCount + ", written bytes: " + writeBytes
                     + ", index size: " + fileIndexList.length + ", time: " + (System.currentTimeMillis() - persistStart));
         }
+
+        if (lastFrozenTable != null) {
+            int lastT = -1;
+            for (Map.Entry<Long, Message> entry : lastFrozenTable.entrySet()) {
+                Message msg = entry.getValue();
+                int t = (int) msg.getT();
+                if (t < minT) {
+                    tIndex[t]++;
+                    if (aByteBufferForWrite.remaining() < Constants.KEY_A_BYTE_LENGTH) {
+                        aByteBufferForWrite.flip();
+                        try {
+                            aFile.getChannel().write(aByteBufferForWrite);
+                        } catch (IOException e) {
+                            logger.info("[ERROR] Write to channel failed: " + e.getMessage());
+                        }
+                        aByteBufferForWrite.clear();
+                    }
+                    aByteBufferForWrite.putShort((short) (msg.getA() - t - DIFF_A_BASE_OFFSET));
+
+                    if (t != lastT && t % T_INDEX_SUMMARY_RATE == 0) {
+                        tSummary[t / T_INDEX_SUMMARY_RATE] = aCounter.get();
+                    }
+                    aCounter.getAndIncrement();
+                } else {
+                    frozenMemTable.put(entry.getKey(), msg);
+                }
+                lastT = t;
+            }
+            if (aByteBufferForWrite.position() > 0) {
+                aByteBufferForWrite.flip();
+                try {
+                    aFile.getChannel().write(aByteBufferForWrite);
+                } catch (IOException e) {
+                    logger.info("[ERROR] Write to channel failed: " + e.getMessage());
+                }
+                aByteBufferForWrite.clear();
+            }
+        }
+        lastFrozenTable = frozenMemTable;
     }
+
+    private void flushMemBuffer() {
+        int lastT = -1;
+        for (Map.Entry<Long, Message> entry : lastFrozenTable.entrySet()) {
+            Message msg = entry.getValue();
+            int t = (int) msg.getT();
+            tIndex[t]++;
+            if (aByteBufferForWrite.remaining() < Constants.KEY_A_BYTE_LENGTH) {
+                aByteBufferForWrite.flip();
+                try {
+                    aFile.getChannel().write(aByteBufferForWrite);
+                } catch (IOException e) {
+                    logger.info("[ERROR] Write to channel failed: " + e.getMessage());
+                }
+                aByteBufferForWrite.clear();
+            }
+            aByteBufferForWrite.putShort((short) (msg.getA() - t - DIFF_A_BASE_OFFSET));
+
+            if (t != lastT && t % T_INDEX_SUMMARY_RATE == 0) {
+                tSummary[t / T_INDEX_SUMMARY_RATE] = aCounter.get();
+            }
+            aCounter.getAndIncrement();
+            lastT = t;
+        }
+        if (aByteBufferForWrite.position() > 0) {
+            aByteBufferForWrite.flip();
+            try {
+                aFile.getChannel().write(aByteBufferForWrite);
+            } catch (IOException e) {
+                logger.info("[ERROR] Write to channel failed: " + e.getMessage());
+            }
+            aByteBufferForWrite.clear();
+        }
+
+//            long count = 0;
+//            for (int i = 0; i < 1000000; i++) {
+//                if (i % T_INDEX_SUMMARY_RATE == 0) {
+//                    assert count == tSummary[i / T_INDEX_SUMMARY_RATE];
+//                }
+//                count += tIndex[i];
+//            }
+//
+//        ByteBuffer aByteBufferForRead = threadBufferForReadA.get();
+//        aByteBufferForRead.clear();
+//        int offset = 0;
+//        while (true) {
+//            try {
+//                int bytes = aFile.getChannel().read(aByteBufferForRead, offset);
+//                if (bytes <= 0) {
+//                    logger.info("AAA offset: " + offset);
+//                    break;
+//                }
+//                offset += bytes;
+//            } catch (IOException e) {
+//                e.printStackTrace();
+//            }
+//            aByteBufferForRead.flip();
+//            while (aByteBufferForRead.remaining() > 0) {
+//                try {
+//                    if (aByteBufferForRead.getShort() + DIFF_A_BASE_OFFSET != 0) {
+//                        throw new RuntimeException("offset: " + offset);
+//                    }
+//                } catch (RuntimeException e) {
+//                    logger.error(e);
+//
+//                }
+//            }
+//            aByteBufferForRead.clear();
+//        }
+    }
+
+//    private void buildMemoryIndex() {
+//        long buildStart = System.currentTimeMillis();
+//        logger.info("Start building memory index");
+//    }
 
     private static class SSTableFile {
         RandomAccessFile file;

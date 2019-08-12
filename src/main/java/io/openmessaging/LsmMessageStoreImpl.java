@@ -116,11 +116,12 @@ public class LsmMessageStoreImpl extends MessageStore {
         long putStart = System.currentTimeMillis();
         int putId = putCounter.getAndIncrement();
         if (IS_TEST_RUN && putId == 0) {
-            _putStart = System.currentTimeMillis();
+            _putStart = putStart;
             _firstStart = putStart;
         }
         if (IS_TEST_RUN && (putStart - _firstStart) > 60 * 1000) {
-            throw new RuntimeException("putID: " + putId);
+            logger.info("" + putStart + ", " + _firstStart);
+            throw new RuntimeException("" + putId);
         }
         if (putId % PUT_SAMPLE_RATE == 0) {
             logger.info("putMessage - t: " + message.getT() + ", a: " + message.getA() + ", putId: " + putId);

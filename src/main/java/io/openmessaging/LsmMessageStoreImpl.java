@@ -41,21 +41,22 @@ public class LsmMessageStoreImpl extends MessageStore {
     private static final int READ_BUFFER_SIZE = Constants.MSG_BYTE_LENGTH * 1024;
 
     private static final int WRITE_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 1024;
-    private static final int READ_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 1024;
+    private static final int READ_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 2048;
 
     private static final int PERSIST_SAMPLE_RATE = 100;
     private static final int PUT_SAMPLE_RATE = 10000000;
     private static final int GET_SAMPLE_RATE = 1000;
     private static final int AVG_SAMPLE_RATE = 1000;
 
-    private static RandomAccessFile aFile;
+    private static FileChannel aFileChannel;
     private static ByteBuffer aByteBufferForWrite = ByteBuffer.allocateDirect(WRITE_A_BUFFER_SIZE);
 
     static {
         logger.info("LsmMessageStoreImpl loaded");
 
         try {
-            aFile = new RandomAccessFile(Constants.DATA_DIR + "a.data", "rw");
+            RandomAccessFile aFile = new RandomAccessFile(Constants.DATA_DIR + "a.data", "rw");
+            aFileChannel = aFile.getChannel();
         } catch (FileNotFoundException e) {
             e.printStackTrace();
         }
@@ -298,7 +299,7 @@ public class LsmMessageStoreImpl extends MessageStore {
 //            }
 //        }
         long sum = 0;
-        long count = 0;
+        int count = 0;
 //        long skip = 0;
 
         long offset = tSummary[(int) (tMin / T_INDEX_SUMMARY_RATE)];
@@ -316,7 +317,7 @@ public class LsmMessageStoreImpl extends MessageStore {
                 if (aByteBufferForRead.remaining() == 0) {
                     try {
                         aByteBufferForRead.clear();
-                        aFile.getChannel().read(aByteBufferForRead, offset);
+                        aFileChannel.read(aByteBufferForRead, offset);
                         aByteBufferForRead.flip();
                     } catch (IOException e) {
                         e.printStackTrace();
@@ -476,7 +477,7 @@ public class LsmMessageStoreImpl extends MessageStore {
                 if (aByteBufferForWrite.remaining() < Constants.KEY_A_BYTE_LENGTH) {
                     aByteBufferForWrite.flip();
                     try {
-                        aFile.getChannel().write(aByteBufferForWrite);
+                        aFileChannel.write(aByteBufferForWrite);
                     } catch (IOException e) {
                         logger.info("[ERROR] Write to channel failed: " + e.getMessage());
                     }
@@ -501,7 +502,7 @@ public class LsmMessageStoreImpl extends MessageStore {
         if (aByteBufferForWrite.position() > 0) {
             aByteBufferForWrite.flip();
             try {
-                aFile.getChannel().write(aByteBufferForWrite);
+                aFileChannel.write(aByteBufferForWrite);
             } catch (IOException e) {
                 logger.info("[ERROR] Write to channel failed: " + e.getMessage());
             }

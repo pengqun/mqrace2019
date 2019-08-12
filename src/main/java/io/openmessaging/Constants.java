@@ -12,7 +12,7 @@ class Constants {
 //    static final int TEST_BOUNDARY = 9000;
 //    static final int PRODUCE_THREAD_NUM = 10;
 
-        static final boolean IS_TEST_RUN = true;
+    static final boolean IS_TEST_RUN = true;
 //    static final boolean IS_TEST_RUN = false;
 
     static final int KEY_A_BYTE_LENGTH = 2;

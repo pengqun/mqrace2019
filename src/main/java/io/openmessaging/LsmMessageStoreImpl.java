@@ -278,13 +278,6 @@ public class LsmMessageStoreImpl extends MessageStore {
             _getEnd = System.currentTimeMillis();
             _avgStart = _getEnd;
         }
-        if (avgId != 0) {
-//            try {
-//                Thread.sleep(1000000);
-//            } catch (InterruptedException e) {
-//                e.printStackTrace();
-//            }
-        }
         if (avgId % AVG_SAMPLE_RATE == 0) {
             logger.info("getAvgValue - tMin: " + tMin + ", tMax: " + tMax
                     + ", aMin: " + aMin + ", aMax: " + aMax + ", avgId: " + avgId);
@@ -313,7 +306,6 @@ public class LsmMessageStoreImpl extends MessageStore {
             offset += tIndex[t];
         }
         offset *= KEY_A_BYTE_LENGTH;
-//        logger.info("offset: " + offset);
 
         ByteBuffer aByteBufferForRead = threadBufferForReadA.get();
         aByteBufferForRead.clear();
@@ -321,7 +313,6 @@ public class LsmMessageStoreImpl extends MessageStore {
 
         for (int t = (int) tMin; t <= tMax; t++) {
             int aCount = tIndex[t];
-//            logger.info("tIndex on " + t + ": " + aCount);
             while (aCount-- > 0) {
                 if (aByteBufferForRead.remaining() == 0) {
                     int bytes = 0;
@@ -335,11 +326,6 @@ public class LsmMessageStoreImpl extends MessageStore {
                     offset += bytes;
                 }
                 long a = aByteBufferForRead.getShort() + t + DIFF_A_BASE_OFFSET;
-//                logger.info("a: " + a);
-                if (a != t) {
-                    logger.error("t: " + t + ", a: " + a + ", pos: " + offset);
-                    throw new RuntimeException();
-                }
                 if (a >= aMin && a <= aMax) {
                     sum += a;
                     count++;

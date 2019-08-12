@@ -35,7 +35,7 @@ public class LsmMessageStoreImpl extends MessageStore {
     private static final int T_INDEX_SIZE = 1024 * 1024 * 1024;
     private static final int T_INDEX_SUMMARY_RATE = 32;
 
-    private static final int T_WRITE_ARRAY_SIZE = 150 * 10000;
+    private static final int T_WRITE_ARRAY_SIZE = 200 * 10000;
 
     private static final int WRITE_BUFFER_SIZE = Constants.MSG_BYTE_LENGTH * 1024;
     private static final int READ_BUFFER_SIZE = Constants.MSG_BYTE_LENGTH * 1024;
@@ -295,6 +295,7 @@ public class LsmMessageStoreImpl extends MessageStore {
         }
         long sum = 0;
         long count = 0;
+        long skip = 0;
 
         long offset = tSummary[(int) (tMin / T_INDEX_SUMMARY_RATE)];
         for (int t = (int) (tMin / T_INDEX_SUMMARY_RATE * T_INDEX_SUMMARY_RATE); t < tMin; t++) {
@@ -323,11 +324,16 @@ public class LsmMessageStoreImpl extends MessageStore {
                 if (a >= aMin && a <= aMax) {
                     sum += a;
                     count++;
+                } else {
+                    skip++;
                 }
             }
         }
         aByteBufferForRead.clear();
 
+        if (avgId % AVG_SAMPLE_RATE == 0) {
+            logger.info("Got " + count + " values, skip " + skip + ", time: " + (System.currentTimeMillis() - avgStart));
+        }
         if (IS_TEST_RUN) {
             avgMsgCounter.addAndGet((int) count);
         }

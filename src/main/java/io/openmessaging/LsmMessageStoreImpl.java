@@ -40,8 +40,8 @@ public class LsmMessageStoreImpl extends MessageStore {
     private static final int WRITE_BUFFER_SIZE = Constants.MSG_BYTE_LENGTH * 1024;
     private static final int READ_BUFFER_SIZE = Constants.MSG_BYTE_LENGTH * 1024;
 
-    private static final int WRITE_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 2048;
-    private static final int READ_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 512;
+    private static final int WRITE_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 1024;
+    private static final int READ_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 1024;
 
     private static final int PERSIST_SAMPLE_RATE = 100;
     private static final int PUT_SAMPLE_RATE = 10000000;
@@ -296,7 +296,6 @@ public class LsmMessageStoreImpl extends MessageStore {
         long sum = 0;
         long count = 0;
         long skip = 0;
-        long zero = 0;
 
         long offset = tSummary[(int) (tMin / T_INDEX_SUMMARY_RATE)];
         for (int t = (int) (tMin / T_INDEX_SUMMARY_RATE * T_INDEX_SUMMARY_RATE); t < tMin; t++) {
@@ -309,9 +308,6 @@ public class LsmMessageStoreImpl extends MessageStore {
 
         for (int t = (int) tMin; t <= tMax; t++) {
             int aCount = tIndex[t];
-            if (aCount == 0) {
-                zero++;
-            }
             while (aCount-- > 0) {
                 if (aByteBufferForRead.remaining() == 0) {
                     int bytes = 0;
@@ -336,7 +332,7 @@ public class LsmMessageStoreImpl extends MessageStore {
         aByteBufferForRead.clear();
 
         if (avgId % AVG_SAMPLE_RATE == 0) {
-            logger.info("Got " + count + ", skip: " + skip + ", zero: " + zero
+            logger.info("Got " + count + ", skip: " + skip
                     + ", time: " + (System.currentTimeMillis() - avgStart));
         }
         if (IS_TEST_RUN) {

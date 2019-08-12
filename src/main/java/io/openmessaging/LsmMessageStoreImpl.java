@@ -84,7 +84,8 @@ public class LsmMessageStoreImpl extends MessageStore {
     private int[] tSummary = new int[T_INDEX_SIZE / T_INDEX_SUMMARY_RATE];
     private AtomicInteger aCounter = new AtomicInteger(0);
 
-    private PriorityBlockingQueue<Long> taBuffer = new PriorityBlockingQueue<>();
+    private Long[] taBuffer = new Long[1000000];
+    private int taIndex = 0;
 
     private int[] currentT = new int[PRODUCE_THREAD_NUM];
 
@@ -404,117 +405,127 @@ public class LsmMessageStoreImpl extends MessageStore {
             logger.info("Start persisting memTable to file: " + fileName);
         }
 
-        RandomAccessFile raf;
-        try {
-            raf = new RandomAccessFile(fileName, "rw");
-        } catch (FileNotFoundException e) {
-            logger.info("[ERROR] File not found", e);
-            throw new RuntimeException(e);
-        }
+        if (frozenMemTable.size() > 0) {
+            RandomAccessFile raf;
+            try {
+                raf = new RandomAccessFile(fileName, "rw");
+            } catch (FileNotFoundException e) {
+                logger.info("[ERROR] File not found", e);
+                throw new RuntimeException(e);
+            }
 
-        ByteBuffer buffer = threadBufferForWrite.get();
-        FileChannel channel = raf.getChannel();
-        int[] fileIndexList = new int[(frozenMemTable.size() - 1) / SST_FILE_INDEX_RATE + 1];
-        int writeCount = 0;
-        int writeBytes = 0;
+            ByteBuffer buffer = threadBufferForWrite.get();
+            FileChannel channel = raf.getChannel();
+            int[] fileIndexList = new int[(frozenMemTable.size() - 1) / SST_FILE_INDEX_RATE + 1];
+            int writeCount = 0;
+            int writeBytes = 0;
 
-        for (Map.Entry<Long, Message> entry : frozenMemTable.entrySet()) {
-            Message msg = entry.getValue();
-            if (buffer.remaining() < Constants.MSG_BYTE_LENGTH) {
+            for (Map.Entry<Long, Message> entry : frozenMemTable.entrySet()) {
+                Message msg = entry.getValue();
+                if (buffer.remaining() < Constants.MSG_BYTE_LENGTH) {
+                    buffer.flip();
+                    try {
+                        writeBytes += buffer.limit();
+                        channel.write(buffer);
+                    } catch (IOException e) {
+                        logger.info("[ERROR] Write to channel failed: " + e.getMessage());
+                    }
+                    buffer.clear();
+                }
+                int t = (int) msg.getT();
+                short a = (short) (msg.getA() - msg.getT() - DIFF_A_BASE_OFFSET);
+
+                buffer.putInt(t);
+                buffer.putShort(a);
+                buffer.put(msg.getBody());
+                if (writeCount % SST_FILE_INDEX_RATE == 0) {
+                    fileIndexList[writeCount / SST_FILE_INDEX_RATE] = (int) msg.getT();
+                }
+                writeCount++;
+
+                taBuffer[taIndex++] = ((((long) t << 32) + msg.getA()));
+            }
+
+            if (buffer.position() > 0) {
                 buffer.flip();
                 try {
                     writeBytes += buffer.limit();
                     channel.write(buffer);
                 } catch (IOException e) {
-                    logger.info("[ERROR] Write to channel failed: " + e.getMessage());
+                    logger.info("ERROR write to file channel: " + e.getMessage());
                 }
                 buffer.clear();
             }
-            int t = (int) msg.getT();
-            short a = (short) (msg.getA() - msg.getT() - DIFF_A_BASE_OFFSET);
 
-            buffer.putInt(t);
-            buffer.putShort(a);
-            buffer.put(msg.getBody());
-            if (writeCount % SST_FILE_INDEX_RATE == 0) {
-                fileIndexList[writeCount / SST_FILE_INDEX_RATE] = (int) msg.getT();
+            long minT = frozenMemTable.firstEntry().getValue().getT();
+            long maxT = frozenMemTable.lastEntry().getValue().getT();
+
+            ssTableFileList.add(new SSTableFile(fileId, raf, channel, minT, maxT, fileIndexList));
+
+            if (fileId % PERSIST_SAMPLE_RATE == 0) {
+                logger.info("Done persisting memTable to file: " + fileName
+                        + ", written msgs: " + writeCount + ", written bytes: " + writeBytes
+                        + ", index size: " + fileIndexList.length + ", time: " + (System.currentTimeMillis() - persistStart));
             }
-            writeCount++;
-
-            taBuffer.add((((long) t << 32) + msg.getA()));
         }
 
-        if (buffer.position() > 0) {
-            buffer.flip();
-            try {
-                writeBytes += buffer.limit();
-                channel.write(buffer);
-            } catch (IOException e) {
-                logger.info("ERROR write to file channel: " + e.getMessage());
-            }
-            buffer.clear();
-        }
-
-        long minT = frozenMemTable.firstEntry().getValue().getT();
-        long maxT = frozenMemTable.lastEntry().getValue().getT();
-
-        ssTableFileList.add(new SSTableFile(fileId, raf, channel, minT, maxT, fileIndexList));
-
-        if (fileId % PERSIST_SAMPLE_RATE == 0) {
-            logger.info("Done persisting memTable to file: " + fileName
-                    + ", written msgs: " + writeCount + ", written bytes: " + writeBytes
-                    + ", index size: " + fileIndexList.length + ", time: " + (System.currentTimeMillis() - persistStart));
-        }
-
-        int lastT = -1;
-        while (!taBuffer.isEmpty() && taBuffer.peek() < ((long) currentMinT << 32)) {
-            long key = taBuffer.poll();
-            int t = (int) (key >> 32);
-            int a = (int) (key);
-            tIndex[t]++;
-            if (aByteBufferForWrite.remaining() < Constants.KEY_A_BYTE_LENGTH) {
-                aByteBufferForWrite.flip();
-                try {
-                    aFile.getChannel().write(aByteBufferForWrite);
-                } catch (IOException e) {
-                    logger.info("[ERROR] Write to channel failed: " + e.getMessage());
+        if (taIndex > 0) {
+            Arrays.sort(taBuffer, 0, taIndex, Collections.reverseOrder());
+            int lastT = -1;
+            int index;
+            for (index = taIndex - 1; index >= 0; index--) {
+                long key = taBuffer[index];
+                int t = (int) (key >> 32);
+                int a = (int) (key);
+                if (t >= currentMinT) {
+                    break;
                 }
-                aByteBufferForWrite.clear();
-            }
-            aByteBufferForWrite.putShort((short) (a - t - DIFF_A_BASE_OFFSET));
+                tIndex[t]++;
+                if (aByteBufferForWrite.remaining() < Constants.KEY_A_BYTE_LENGTH) {
+                    aByteBufferForWrite.flip();
+                    try {
+                        aFile.getChannel().write(aByteBufferForWrite);
+                    } catch (IOException e) {
+                        logger.info("[ERROR] Write to channel failed: " + e.getMessage());
+                    }
+                    aByteBufferForWrite.clear();
+                }
+                aByteBufferForWrite.putShort((short) (a - t - DIFF_A_BASE_OFFSET));
 
-            if (t != lastT && t % T_INDEX_SUMMARY_RATE == 0) {
-                tSummary[t / T_INDEX_SUMMARY_RATE] = aCounter.get();
+                if (t != lastT && t % T_INDEX_SUMMARY_RATE == 0) {
+                    tSummary[t / T_INDEX_SUMMARY_RATE] = aCounter.get();
+                }
+                aCounter.getAndIncrement();
+                lastT = t;
             }
-            aCounter.getAndIncrement();
-            lastT = t;
+            taIndex = index + 1;
         }
     }
 
     private void flushMemBuffer() {
-        int lastT = -1;
-        while (!taBuffer.isEmpty()) {
-            long key = taBuffer.poll();
-            int t = (int) (key >> 32);
-            int a = (int) (key);
-            tIndex[t]++;
-            if (aByteBufferForWrite.remaining() < Constants.KEY_A_BYTE_LENGTH) {
-                aByteBufferForWrite.flip();
-                try {
-                    aFile.getChannel().write(aByteBufferForWrite);
-                } catch (IOException e) {
-                    logger.info("[ERROR] Write to channel failed: " + e.getMessage());
-                }
-                aByteBufferForWrite.clear();
-            }
-            aByteBufferForWrite.putShort((short) (a - t - DIFF_A_BASE_OFFSET));
-
-            if (t != lastT && t % T_INDEX_SUMMARY_RATE == 0) {
-                tSummary[t / T_INDEX_SUMMARY_RATE] = aCounter.get();
-            }
-            aCounter.getAndIncrement();
-            lastT = t;
-        }
+//        int lastT = -1;
+//        while (!taBuffer.isEmpty()) {
+//            long key = taBuffer.poll();
+//            int t = (int) (key >> 32);
+//            int a = (int) (key);
+//            tIndex[t]++;
+//            if (aByteBufferForWrite.remaining() < Constants.KEY_A_BYTE_LENGTH) {
+//                aByteBufferForWrite.flip();
+//                try {
+//                    aFile.getChannel().write(aByteBufferForWrite);
+//                } catch (IOException e) {
+//                    logger.info("[ERROR] Write to channel failed: " + e.getMessage());
+//                }
+//                aByteBufferForWrite.clear();
+//            }
+//            aByteBufferForWrite.putShort((short) (a - t - DIFF_A_BASE_OFFSET));
+//
+//            if (t != lastT && t % T_INDEX_SUMMARY_RATE == 0) {
+//                tSummary[t / T_INDEX_SUMMARY_RATE] = aCounter.get();
+//            }
+//            aCounter.getAndIncrement();
+//            lastT = t;
+//        }
         if (aByteBufferForWrite.position() > 0) {
             aByteBufferForWrite.flip();
             try {
@@ -524,6 +535,7 @@ public class LsmMessageStoreImpl extends MessageStore {
             }
             aByteBufferForWrite.clear();
         }
+    }
 
 //            long count = 0;
 //            for (int i = 0; i < 1000000; i++) {
@@ -560,7 +572,7 @@ public class LsmMessageStoreImpl extends MessageStore {
 //            }
 //            aByteBufferForRead.clear();
 //        }
-    }
+//    }
 
 //    private void buildMemoryIndex() {
 //        long buildStart = System.currentTimeMillis();

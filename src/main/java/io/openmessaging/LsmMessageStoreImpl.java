@@ -35,7 +35,7 @@ public class LsmMessageStoreImpl extends MessageStore {
     private static final int T_INDEX_SIZE = 1024 * 1024 * 1024;
     private static final int T_INDEX_SUMMARY_RATE = 32;
 
-    private static final int T_WRITE_ARRAY_SIZE = 120 * 10000;
+    private static final int T_WRITE_ARRAY_SIZE = 150 * 10000;
 
     private static final int WRITE_BUFFER_SIZE = Constants.MSG_BYTE_LENGTH * 1024;
     private static final int READ_BUFFER_SIZE = Constants.MSG_BYTE_LENGTH * 1024;

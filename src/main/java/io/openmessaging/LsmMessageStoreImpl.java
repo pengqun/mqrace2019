@@ -301,14 +301,13 @@ public class LsmMessageStoreImpl extends MessageStore {
         long sum = 0;
         long count = 0;
 
-        int offset = tSummary[(int) (tMin / T_INDEX_SUMMARY_RATE)];
+        long offset = tSummary[(int) (tMin / T_INDEX_SUMMARY_RATE)];
         for (int t = (int) (tMin / T_INDEX_SUMMARY_RATE * T_INDEX_SUMMARY_RATE); t < tMin; t++) {
             offset += tIndex[t];
         }
         offset *= KEY_A_BYTE_LENGTH;
 
         ByteBuffer aByteBufferForRead = threadBufferForReadA.get();
-        aByteBufferForRead.clear();
         aByteBufferForRead.flip();
 
         for (int t = (int) tMin; t <= tMax; t++) {

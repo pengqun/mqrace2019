@@ -84,7 +84,7 @@ public class LsmMessageStoreImpl extends MessageStore {
     private int[] tSummary = new int[T_INDEX_SIZE / T_INDEX_SUMMARY_RATE];
     private AtomicInteger aCounter = new AtomicInteger(0);
 
-    private Long[] taBuffer = new Long[1000000];
+    private Long[] taBuffer = new Long[2000000];
     private int taIndex = 0;
 
     private int[] currentT = new int[PRODUCE_THREAD_NUM];
@@ -465,7 +465,8 @@ public class LsmMessageStoreImpl extends MessageStore {
             if (fileId % PERSIST_SAMPLE_RATE == 0) {
                 logger.info("Done persisting memTable to file: " + fileName
                         + ", written msgs: " + writeCount + ", written bytes: " + writeBytes
-                        + ", index size: " + fileIndexList.length + ", time: " + (System.currentTimeMillis() - persistStart));
+                        + ", index size: " + fileIndexList.length + ", taIndex: " + taIndex
+                        + ", time: " + (System.currentTimeMillis() - persistStart));
             }
         }
 
@@ -499,6 +500,9 @@ public class LsmMessageStoreImpl extends MessageStore {
                 lastT = t;
             }
             taIndex = index + 1;
+            if (fileId % PERSIST_SAMPLE_RATE == 0) {
+                logger.info("Updated taIndex: " + taIndex);
+            }
         }
     }
 

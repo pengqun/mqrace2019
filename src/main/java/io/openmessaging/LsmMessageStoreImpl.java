@@ -184,6 +184,10 @@ public class LsmMessageStoreImpl extends MessageStore {
             printSSTableList();
             logger.info("Flushed all memTables, time: " + (System.currentTimeMillis() - getStart));
 //            persistThreadPool.execute(() -> buildMemoryIndex());
+
+            taBuffer = null;
+            System.gc();
+            logger.info("Try active GC, time: " + (System.currentTimeMillis() - getStart));
         }
         while (!persistDone) {
             logger.info("Waiting for all persist tasks to finish");

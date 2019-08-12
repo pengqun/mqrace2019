@@ -86,6 +86,8 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     private PriorityBlockingQueue<Long> taBuffer = new PriorityBlockingQueue<>();
 
+    private int[] currentT = new int[PRODUCE_THREAD_NUM];
+
     private ThreadLocal<ByteBuffer> threadBufferForMsg = ThreadLocal.withInitial(()
             -> ByteBuffer.allocateDirect(READ_BUFFER_SIZE));
 
@@ -95,6 +97,10 @@ public class LsmMessageStoreImpl extends MessageStore {
     private ThreadLocal<ByteBuffer> threadBufferForReadA = ThreadLocal.withInitial(()
             -> ByteBuffer.allocateDirect(READ_A_BUFFER_SIZE));
 
+    private AtomicInteger threadIdCounter = new AtomicInteger(0);
+    private ThreadLocal<Integer> threadId = ThreadLocal.withInitial(()
+            -> threadIdCounter.getAndIncrement());
+
     private AtomicLong getMsgCounter = new AtomicLong(0);
     private AtomicLong avgMsgCounter = new AtomicLong(0);
     private long _putStart = 0;
@@ -103,12 +109,18 @@ public class LsmMessageStoreImpl extends MessageStore {
     private long _getEnd = 0;
     private long _avgStart = 0;
 
+    private long _firstStart = 0;
+
     @Override
     public void put(Message message) {
         long putStart = System.currentTimeMillis();
         int putId = putCounter.getAndIncrement();
         if (IS_TEST_RUN && putId == 0) {
             _putStart = System.currentTimeMillis();
+            _firstStart = putStart;
+        }
+        if (IS_TEST_RUN && (putStart - _firstStart) > 60 * 1000) {
+            throw new RuntimeException("putID: " + putId);
         }
         if (putId % PUT_SAMPLE_RATE == 0) {
             logger.info("putMessage - t: " + message.getT() + ", a: " + message.getA() + ", putId: " + putId);
@@ -123,11 +135,20 @@ public class LsmMessageStoreImpl extends MessageStore {
                     + (System.currentTimeMillis() - putStart) + ", putId: " + putId);
         }
 
+        currentT[threadId.get()] = (int) message.getT();
+
         if ((putId + 1) % MAX_MEM_TABLE_SIZE == 0) {
 //            logger.info("Submit memTable persist task, putId: " + putId);
+            int currentMinT = currentT[0];
+            for (int i = 1; i < currentT.length; i++) {
+                currentMinT = Math.min(currentMinT, currentT[i]);
+            }
+            int finalCurrentMinT = currentMinT;
+
             NavigableMap<Long, Message> frozenMemTable = memTable;
             memTable = new TreeMap<>();
-            persistThreadPool.execute(() -> persistMemTable(frozenMemTable));
+
+            persistThreadPool.execute(() -> persistMemTable(frozenMemTable, finalCurrentMinT));
 //            logger.info("Submitted memTable persist task, time: "
 //                    + (System.currentTimeMillis() - putStart) + ", putId: " + putId);
         }
@@ -156,7 +177,7 @@ public class LsmMessageStoreImpl extends MessageStore {
                 }
             }
             if (memTable.size() > 0) {
-                persistMemTable(memTable);
+                persistMemTable(memTable, Integer.MAX_VALUE);
             }
             flushMemBuffer();
             sortSSTableList();
@@ -374,7 +395,7 @@ public class LsmMessageStoreImpl extends MessageStore {
         return targetFileList;
     }
 
-    private void persistMemTable(NavigableMap<Long, Message> frozenMemTable) {
+    private void persistMemTable(NavigableMap<Long, Message> frozenMemTable, int currentMinT) {
         long persistStart = System.currentTimeMillis();
         int fileId = fileCounter.getAndIncrement();
         String fileName = Constants.DATA_DIR + "sst" + fileId + ".data";
@@ -445,7 +466,7 @@ public class LsmMessageStoreImpl extends MessageStore {
         }
 
         int lastT = -1;
-        while (!taBuffer.isEmpty() && taBuffer.peek() < (minT << 32)) {
+        while (!taBuffer.isEmpty() && taBuffer.peek() < ((long) currentMinT << 32)) {
             long key = taBuffer.poll();
             int t = (int) (key >> 32);
             int a = (int) (key);

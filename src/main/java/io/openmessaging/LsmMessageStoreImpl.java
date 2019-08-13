@@ -31,7 +31,7 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     private static final int T_INDEX_SIZE = 1024 * 1024 * 1024;
     private static final int T_INDEX_SUMMARY_RATE = 32;
-    private static final int T_WRITE_ARRAY_SIZE = 200 * 10000;
+    private static final int T_WRITE_ARRAY_SIZE = 300 * 10000;
 
     private static final int WRITE_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 1024;
     private static final int READ_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 1024;
@@ -124,7 +124,14 @@ public class LsmMessageStoreImpl extends MessageStore {
             NavigableMap<Long, Message> frozenMemTable = memTable;
             memTable = new TreeMap<>();
 
-            persistThreadPool.execute(() -> persistMemTable(frozenMemTable, finalCurrentMinT));
+            persistThreadPool.execute(() -> {
+                try {
+                    persistMemTable(frozenMemTable, finalCurrentMinT);
+                } catch (Exception e) {
+                    logger.info("Failed to persist mem table", e);
+                    System.exit(-1);
+                }
+            });
 //            logger.info("Submitted memTable persist task, time: "
 //                    + (System.currentTimeMillis() - putStart) + ", putId: " + putId);
         }

@@ -18,5 +18,5 @@ class Constants {
     static final int KEY_A_BYTE_LENGTH = 2;
     static final int BODY_BYTE_LENGTH = 34;
 
-    static final int MAX_T_INDEX_SIZE = 64;
+    static final int MAX_T_INDEX_SIZE = 4096;
 }

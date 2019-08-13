@@ -56,8 +56,8 @@ public class MiMessageStoreImpl extends MessageStore {
         }
     }
 
-//    private volatile NavigableMap<Long, Message> memTable = new TreeMap<>();
-    private volatile Map<Long, Message> memTable = new ConcurrentHashMap<>();
+    private volatile NavigableMap<Long, Message> memTable = new TreeMap<>();
+//    private volatile Map<Long, Message> memTable = new ConcurrentHashMap<>();
 
     private ThreadPoolExecutor persistThreadPool = new ThreadPoolExecutor(1, 1,
             0L, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>());
@@ -102,9 +102,9 @@ public class MiMessageStoreImpl extends MessageStore {
             throw new RuntimeException(":)" + putId);
         }
         long key = (message.getT() << 32) + putId;
-//        synchronized (this) {
+        synchronized (this) {
             memTable.put(key, message);
-//        }
+        }
         if (putId % PUT_SAMPLE_RATE == 0) {
             logger.info("putMessage to memTable with t: " + message.getT() + ", a: " + message.getA()
                     + ", time: " + (System.currentTimeMillis() - putStart) + ", putId: " + putId);
@@ -120,10 +120,10 @@ public class MiMessageStoreImpl extends MessageStore {
             }
             int finalCurrentMinT = currentMinT;
 
-//            NavigableMap<Long, Message> frozenMemTable = memTable;
-            Map<Long, Message> frozenMemTable = memTable;
-//            memTable = new TreeMap<>();
-            memTable = new ConcurrentHashMap<>();
+            NavigableMap<Long, Message> frozenMemTable = memTable;
+//            Map<Long, Message> frozenMemTable = memTable;
+            memTable = new TreeMap<>();
+//            memTable = new ConcurrentHashMap<>();
 
             persistThreadPool.execute(() -> persistMemTable(frozenMemTable, finalCurrentMinT));
 //            logger.info("Submitted memTable persist task, time: "

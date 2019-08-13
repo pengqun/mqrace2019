@@ -42,7 +42,7 @@ public class LsmMessageStoreImpl extends MessageStore {
     private static final int READ_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 1024;
 
     private static final int PERSIST_SAMPLE_RATE = 1;
-    private static final int PUT_SAMPLE_RATE = 10000000;
+    private static final int PUT_SAMPLE_RATE = 100000;
     private static final int GET_SAMPLE_RATE = 1000;
     private static final int AVG_SAMPLE_RATE = 1000;
 
@@ -187,7 +187,7 @@ public class LsmMessageStoreImpl extends MessageStore {
     }
 
     private static class BufferList {
-        private Message[] msgList = new Message[(int) (MAX_MEM_TABLE_SIZE * 1.5)];
+        private Message[] msgList = new Message[(int) (MAX_MEM_TABLE_SIZE * 2)];
         private AtomicInteger writeIndex = new AtomicInteger(0);
 
         void add(Message msg) {

@@ -98,9 +98,9 @@ public class MiMessageStoreImpl extends MessageStore {
             _putStart = putStart;
             _firstStart = putStart;
         }
-        if (IS_TEST_RUN && _firstStart > 0 && (putStart - _firstStart) > 60 * 1000) {
-            throw new RuntimeException(":)" + putId);
-        }
+//        if (IS_TEST_RUN && _firstStart > 0 && (putStart - _firstStart) > 60 * 1000) {
+//            throw new RuntimeException(":)" + putId);
+//        }
         long key = (message.getT() << 32) + putId;
         synchronized (this) {
             memTable.put(key, message);

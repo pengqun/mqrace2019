@@ -9,8 +9,11 @@ import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
-import java.util.concurrent.PriorityBlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -24,10 +27,13 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     private static final Logger logger = Logger.getLogger(LsmMessageStoreImpl.class);
 
+    private static final int MAX_MEM_TABLE_SIZE = 10 * 10000;
+
     private static final int DIFF_A_BASE_OFFSET = 10000;
 
     private static final int T_INDEX_SIZE = 1024 * 1024 * 1024;
     private static final int T_INDEX_SUMMARY_RATE = 32;
+    private static final int T_WRITE_ARRAY_SIZE = 200 * 10000;
 
     private static final int WRITE_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 1024;
     private static final int READ_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 1024;
@@ -35,6 +41,7 @@ public class LsmMessageStoreImpl extends MessageStore {
     private static final int WRITE_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 1024;
     private static final int READ_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 1024;
 
+    private static final int PERSIST_SAMPLE_RATE = 1;
     private static final int PUT_SAMPLE_RATE = 10000000;
     private static final int GET_SAMPLE_RATE = 1000;
     private static final int AVG_SAMPLE_RATE = 1000;
@@ -56,20 +63,24 @@ public class LsmMessageStoreImpl extends MessageStore {
         }
     }
 
-    private PriorityBlockingQueue<Message> msgQueue = new PriorityBlockingQueue<>(
-            100 * 10000, (o1, o2) -> (int) (o1.getT() - o2.getT()));
+    private BufferList memTable = new BufferList();
+
+    private ThreadPoolExecutor persistThreadPool = new ThreadPoolExecutor(1, 1,
+            0L, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>());
 
     private AtomicInteger putCounter = new AtomicInteger(0);
+    private AtomicInteger persistCounter = new AtomicInteger(0);
     private AtomicInteger getCounter = new AtomicInteger(0);
     private AtomicInteger avgCounter = new AtomicInteger(0);
 
-    private volatile boolean putDone = false;
     private volatile boolean persistDone = false;
+
+    private Message[] msgBuffer = new Message[T_WRITE_ARRAY_SIZE];
+    private int bufferIndex = 0;
 
     private short[] tIndex = new short[T_INDEX_SIZE];
     private int[] tSummary = new int[T_INDEX_SIZE / T_INDEX_SUMMARY_RATE];
-    private AtomicInteger aCounter = new AtomicInteger(0);
-    private int lastT = -1;
+    private AtomicInteger msgCounter = new AtomicInteger(0);
     private int[] currentT = new int[PRODUCE_THREAD_NUM];
 
     private ThreadLocal<ByteBuffer> threadBufferForReadA = ThreadLocal.withInitial(()
@@ -98,64 +109,97 @@ public class LsmMessageStoreImpl extends MessageStore {
             logger.info("putMessage - t: " + message.getT() + ", a: " + message.getA() + ", putId: " + putId);
         }
 
-        if (putId == 0) {
-            new Thread(() -> {
-                try {
-                    persistMessage();
-                } catch (RuntimeException e) {
-                    logger.info("[ERROR] failed to persist message", e);
-                    System.exit(-1);
-                }
-            }).start();
-        }
-        msgQueue.put(message);
-        currentT[threadId.get()] = (int) message.getT();
-    }
+        memTable.add(message);
 
-    private void persistMessage() {
-        while (true) {
+        currentT[threadId.get()] = (int) message.getT();
+
+        if ((putId + 1) % MAX_MEM_TABLE_SIZE == 0) {
+//            logger.info("Submit memTable persist task, putId: " + putId);
             int currentMinT = currentT[0];
             for (int i = 1; i < currentT.length; i++) {
                 currentMinT = Math.min(currentMinT, currentT[i]);
             }
-            Message msg = null;
-            try {
-                msg = msgQueue.take();
-            } catch (InterruptedException e) {
-                e.printStackTrace();
+            int finalCurrentMinT = currentMinT;
+
+            BufferList frozenMemTable = memTable;
+            memTable = new BufferList();
+
+            persistThreadPool.execute(() -> persistMemTable(frozenMemTable, finalCurrentMinT));
+//            logger.info("Submitted memTable persist task, time: "
+//                    + (System.currentTimeMillis() - putStart) + ", putId: " + putId);
+        }
+    }
+
+    private void persistMemTable(BufferList frozenMemTable, int currentMinT) {
+        long persistStart = System.currentTimeMillis();
+        int persistId = persistCounter.getAndIncrement();
+        if (persistId % PERSIST_SAMPLE_RATE == 0) {
+            logger.info("Start persisting memTable with size: " + frozenMemTable.getCount()
+                    + ", buffer index: " + bufferIndex + ", persistId: " + persistId);
+        }
+        if (frozenMemTable.getCount() > 0) {
+            System.arraycopy(frozenMemTable.getMsgList(), 0, msgBuffer, bufferIndex, frozenMemTable.getCount());
+            bufferIndex += frozenMemTable.getCount();
+            if (persistId % PERSIST_SAMPLE_RATE == 0) {
+                logger.info("Copied memTable to buffer with index: " + bufferIndex
+                        + ", time: " + (System.currentTimeMillis() - persistStart) + ", persistId: " + persistId);
             }
-            if (msg == null) {
-                try {
-                    Thread.sleep(10);
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
+        }
+        if (bufferIndex > 0) {
+            Arrays.sort(msgBuffer, 0, bufferIndex, (o1, o2) -> (int) (o2.getT() - o1.getT()));
+            if (persistId % PERSIST_SAMPLE_RATE == 0) {
+                logger.info("Sorted memTable to buffer with index: " + bufferIndex
+                        + ", time: " + (System.currentTimeMillis() - persistStart) + ", persistId: " + persistId);
+            }
+            int lastT = -1;
+            int index;
+            for (index = bufferIndex - 1; index >= 0; index--) {
+                Message msg = msgBuffer[index];
+                int t = (int) msg.getT();
+                short a = (short) (msg.getA() - msg.getT() - DIFF_A_BASE_OFFSET);
+                if (t > currentMinT) {
+                    break;
                 }
-                continue;
-            }
-            if (msg.getT() > currentMinT && !putDone) {
-                msgQueue.put(msg);
-                continue;
-            }
+                if (!aByteBufferForWrite.hasRemaining()) {
+                    flushBuffer(aFileChannel, aByteBufferForWrite);
+                }
+                aByteBufferForWrite.putShort(a);
 
-            int t = (int) msg.getT();
-            short a = (short) (msg.getA() - msg.getT() - DIFF_A_BASE_OFFSET);
+                if (!bodyByteBufferForWrite.hasRemaining()) {
+                    flushBuffer(bodyFileChannel, bodyByteBufferForWrite);
+                }
+                bodyByteBufferForWrite.put(msg.getBody());
 
-            if (!aByteBufferForWrite.hasRemaining()) {
-                flushBuffer(aFileChannel, aByteBufferForWrite);
+                tIndex[t]++;
+                if (t != lastT && t % T_INDEX_SUMMARY_RATE == 0) {
+                    tSummary[t / T_INDEX_SUMMARY_RATE] = msgCounter.get();
+                }
+                msgCounter.getAndIncrement();
+                lastT = t;
             }
-            aByteBufferForWrite.putShort(a);
+            bufferIndex = index + 1;
+        }
+        if (persistId % PERSIST_SAMPLE_RATE == 0) {
+            logger.info("Done persisting memTable with size: " + frozenMemTable.getCount()
+                    + ", buffer index: " + bufferIndex
+                    + ", time: " + (System.currentTimeMillis() - persistStart) + ", persistId: " + persistId);
+        }
+    }
 
-            if (!bodyByteBufferForWrite.hasRemaining()) {
-                flushBuffer(bodyFileChannel, bodyByteBufferForWrite);
-            }
-            bodyByteBufferForWrite.put(msg.getBody());
+    private static class BufferList {
+        private Message[] msgList = new Message[(int) (MAX_MEM_TABLE_SIZE * 1.5)];
+        private AtomicInteger writeIndex = new AtomicInteger(0);
 
-            tIndex[t]++;
-            if (t != lastT && t % T_INDEX_SUMMARY_RATE == 0) {
-                tSummary[t / T_INDEX_SUMMARY_RATE] = aCounter.get();
-            }
-            aCounter.getAndIncrement();
-            lastT = t;
+        void add(Message msg) {
+            msgList[writeIndex.getAndIncrement()] = msg;
+        }
+
+        Message[] getMsgList() {
+            return msgList;
+        }
+
+        int getCount() {
+            return writeIndex.get();
         }
     }
 
@@ -182,18 +226,25 @@ public class LsmMessageStoreImpl extends MessageStore {
                     + ", aMin: " + aMin + ", aMax: " + aMax + ", getId: " + getId);
         }
         if (getId == 0) {
-            putDone = true;
-            while (!msgQueue.isEmpty()) {
-                logger.info("Waiting for msg queue to drain");
+            logger.info("Flush all memTables before getMessage");
+            while (persistThreadPool.getActiveCount() + persistThreadPool.getQueue().size() > 0) {
+                logger.info("Waiting for previous persist tasks to finish");
                 try {
                     Thread.sleep(10);
                 } catch (InterruptedException e) {
                     e.printStackTrace();
                 }
             }
+            persistMemTable(memTable, Integer.MAX_VALUE);
             flushBuffer(aFileChannel, aByteBufferForWrite);
             flushBuffer(bodyFileChannel, bodyByteBufferForWrite);
             persistDone = true;
+            persistThreadPool.shutdown();
+            logger.info("Flushed all memTables, time: " + (System.currentTimeMillis() - getStart));
+
+//            msgBuffer = null;
+//            System.gc();
+//            logger.info("Try active GC, time: " + (System.currentTimeMillis() - getStart));
         }
         while (!persistDone) {
             logger.info("Waiting for all persist tasks to finish");

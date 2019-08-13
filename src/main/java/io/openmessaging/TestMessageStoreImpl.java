@@ -93,12 +93,23 @@ public class TestMessageStoreImpl extends MessageStore {
             repeatCounter[msgCounter[t]]++;
         }
 
+        int nonZeroCount = 0;
         for (int diff = minDiff; diff <= maxDiff; diff++) {
             logger.info(" diff: " + diff + " -> " + diffCounter[diff]);
+            if (diffCounter[diff] > 0) {
+                nonZeroCount++;
+            }
         }
+        logger.info(" non-zero diff: " + nonZeroCount);
+
+        nonZeroCount = 0;
         for (int repeat = 0; repeat <= maxRepeat; repeat++) {
             logger.info(" repeat: " + repeat + " -> " + repeatCounter[repeat]);
+            if (repeatCounter[repeat] > 0) {
+                nonZeroCount++;
+            }
         }
+        logger.info(" non-zero diff: " + nonZeroCount);
 
         logger.info("getMessage: _aMin - " + _aMin + ", _aMax - " + _aMax
                 + ", _tMin - " + _tMin + ", _tMax - " + _tMax + ", totalCount = " + totalCount

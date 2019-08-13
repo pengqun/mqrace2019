@@ -89,7 +89,7 @@ public class TestMessageStoreImpl extends MessageStore {
             }
         }
 //        logger.info("getMessage: aMin - " + aMin + ", aMax - " + aMax + ", tMin - " + tMin + ", tMax - " + tMax);
-        for (int t = 0; t < 1024 * 1024 * 1024; t++) {
+        for (int t = (int) _tMin; t <= _tMax; t++) {
             repeatCounter[msgCounter[t]]++;
         }
 

@@ -187,7 +187,7 @@ public class LsmMessageStoreImpl extends MessageStore {
     }
 
     private static class BufferList {
-        private Message[] msgList = new Message[(int) (MAX_MEM_TABLE_SIZE * 2)];
+        private Message[] msgList = new Message[(MAX_MEM_TABLE_SIZE * 10)];
         private AtomicInteger writeIndex = new AtomicInteger(0);
 
         void add(Message msg) {

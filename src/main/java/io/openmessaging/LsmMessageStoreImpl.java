@@ -8,9 +8,7 @@ import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
+import java.util.*;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -41,8 +39,8 @@ public class LsmMessageStoreImpl extends MessageStore {
     private static final int WRITE_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 1024;
     private static final int READ_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 1024;
 
-    private static final int PERSIST_SAMPLE_RATE = 1;
-    private static final int PUT_SAMPLE_RATE = 100000;
+    private static final int PERSIST_SAMPLE_RATE = 100;
+    private static final int PUT_SAMPLE_RATE = 10000000;
     private static final int GET_SAMPLE_RATE = 1000;
     private static final int AVG_SAMPLE_RATE = 1000;
 
@@ -63,7 +61,7 @@ public class LsmMessageStoreImpl extends MessageStore {
         }
     }
 
-    private BufferList memTable = new BufferList();
+    private volatile NavigableMap<Long, Message> memTable = new TreeMap<>();
 
     private ThreadPoolExecutor persistThreadPool = new ThreadPoolExecutor(1, 1,
             0L, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>());
@@ -104,12 +102,14 @@ public class LsmMessageStoreImpl extends MessageStore {
             logger.info("" + putStart + ", " + _firstStart);
             throw new RuntimeException("" + putId);
         }
-
-        if (putId % PUT_SAMPLE_RATE == 0) {
-            logger.info("putMessage - t: " + message.getT() + ", a: " + message.getA() + ", putId: " + putId);
+        long key = (message.getT() << 32) + putId;
+        synchronized (this) {
+            memTable.put(key, message);
         }
-
-        memTable.add(message);
+        if (putId % PUT_SAMPLE_RATE == 0) {
+            logger.info("putMessage to memTable with t: " + message.getT() + ", a: " + message.getA()
+                    + ", time: " + (System.currentTimeMillis() - putStart) + ", putId: " + putId);
+        }
 
         currentT[threadId.get()] = (int) message.getT();
 
@@ -121,8 +121,8 @@ public class LsmMessageStoreImpl extends MessageStore {
             }
             int finalCurrentMinT = currentMinT;
 
-            BufferList frozenMemTable = memTable;
-            memTable = new BufferList();
+            NavigableMap<Long, Message> frozenMemTable = memTable;
+            memTable = new TreeMap<>();
 
             persistThreadPool.execute(() -> persistMemTable(frozenMemTable, finalCurrentMinT));
 //            logger.info("Submitted memTable persist task, time: "
@@ -130,20 +130,20 @@ public class LsmMessageStoreImpl extends MessageStore {
         }
     }
 
-    private void persistMemTable(BufferList frozenMemTable, int currentMinT) {
+    private void persistMemTable(NavigableMap<Long, Message> frozenMemTable, int currentMinT) {
         long persistStart = System.currentTimeMillis();
         int persistId = persistCounter.getAndIncrement();
         if (persistId % PERSIST_SAMPLE_RATE == 0) {
-            logger.info("Start persisting memTable with size: " + frozenMemTable.getCount()
+            logger.info("Start persisting memTable with size: " + frozenMemTable.size()
                     + ", buffer index: " + bufferIndex + ", persistId: " + persistId);
         }
-        if (frozenMemTable.getCount() > 0) {
-            System.arraycopy(frozenMemTable.getMsgList(), 0, msgBuffer, bufferIndex, frozenMemTable.getCount());
-            bufferIndex += frozenMemTable.getCount();
-            if (persistId % PERSIST_SAMPLE_RATE == 0) {
-                logger.info("Copied memTable to buffer with index: " + bufferIndex
-                        + ", time: " + (System.currentTimeMillis() - persistStart) + ", persistId: " + persistId);
-            }
+        for (Map.Entry<Long, Message> entry : frozenMemTable.entrySet()) {
+            Message msg = entry.getValue();
+            msgBuffer[bufferIndex++] = msg;
+        }
+        if (persistId % PERSIST_SAMPLE_RATE == 0) {
+            logger.info("Copied memTable to buffer with index: " + bufferIndex
+                    + ", time: " + (System.currentTimeMillis() - persistStart) + ", persistId: " + persistId);
         }
         if (bufferIndex > 0) {
             Arrays.sort(msgBuffer, 0, bufferIndex, (o1, o2) -> (int) (o2.getT() - o1.getT()));
@@ -180,26 +180,9 @@ public class LsmMessageStoreImpl extends MessageStore {
             bufferIndex = index + 1;
         }
         if (persistId % PERSIST_SAMPLE_RATE == 0) {
-            logger.info("Done persisting memTable with size: " + frozenMemTable.getCount()
+            logger.info("Done persisting memTable with size: " + frozenMemTable.size()
                     + ", buffer index: " + bufferIndex
                     + ", time: " + (System.currentTimeMillis() - persistStart) + ", persistId: " + persistId);
-        }
-    }
-
-    private static class BufferList {
-        private Message[] msgList = new Message[(MAX_MEM_TABLE_SIZE * 10)];
-        private AtomicInteger writeIndex = new AtomicInteger(0);
-
-        void add(Message msg) {
-            msgList[writeIndex.getAndIncrement()] = msg;
-        }
-
-        Message[] getMsgList() {
-            return msgList;
-        }
-
-        int getCount() {
-            return writeIndex.get();
         }
     }
 

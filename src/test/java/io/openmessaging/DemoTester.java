@@ -22,8 +22,8 @@ public class DemoTester {
         int checkTime = 10 * 60 * 1000;
 
         //正确性检测的次数
-        int checkTimes = 10000;
-//        int checkTimes = 10;
+        int checkTimes = 10;
+        int checkTimes2 = 10000;
         //发送的线程数量
         int sendTsNum = 10;
         //查询的线程数量
@@ -88,7 +88,7 @@ public class DemoTester {
         AtomicLong valueCheckNum = new AtomicLong(0);
         Thread[] checks = new Thread[checkTsNum];
         for (int i = 0; i < checkTsNum; i++) {
-            checks[i] = new Thread(new ValueChecker(messageStore, maxCheckTime, checkTimes, msgNum, maxValueCheckSize, valueCheckTimes, valueCheckNum));
+            checks[i] = new Thread(new ValueChecker(messageStore, maxCheckTime, checkTimes2, msgNum, maxValueCheckSize, valueCheckTimes, valueCheckNum));
         }
         for (int i = 0; i < checkTsNum; i++) {
             checks[i].start();

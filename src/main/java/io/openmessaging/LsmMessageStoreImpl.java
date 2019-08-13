@@ -322,7 +322,7 @@ public class LsmMessageStoreImpl extends MessageStore {
                     } catch (IOException e) {
                         e.printStackTrace();
                     }
-                    offset += WRITE_A_BUFFER_SIZE;
+                    offset += READ_A_BUFFER_SIZE;
                 }
                 long a = aByteBufferForRead.getShort() + t + DIFF_A_BASE_OFFSET;
                 if (a >= aMin && a <= aMax) {

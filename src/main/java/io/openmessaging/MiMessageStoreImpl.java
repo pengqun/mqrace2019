@@ -29,7 +29,7 @@ public class MiMessageStoreImpl extends MessageStore {
     private static final int MAX_MEM_TABLE_SIZE = 10 * 10000;
 
     private static final int T_INDEX_SIZE = 1000 * 1024 * 1024;
-    private static final int T_INDEX_SUMMARY_RATE = 16;
+    private static final int T_INDEX_SUMMARY_RATE = 64;
     private static final int T_WRITE_ARRAY_SIZE = 300 * 10000;
 
     private static final int A_DIFF_BASE_OFFSET = 10000;
@@ -40,7 +40,7 @@ public class MiMessageStoreImpl extends MessageStore {
 
     private static final int PERSIST_SAMPLE_RATE = 100;
     private static final int PUT_SAMPLE_RATE = 10000000;
-    private static final int GET_SAMPLE_RATE = 1000;
+    private static final int GET_SAMPLE_RATE = 1;
     private static final int AVG_SAMPLE_RATE = 1000;
 
     private static FileChannel bodyFileChannel;
@@ -253,9 +253,9 @@ public class MiMessageStoreImpl extends MessageStore {
             persistThreadPool.shutdown();
             logger.info("Flushed all memTables, time: " + (System.currentTimeMillis() - getStart));
 
-//            msgBuffer = null;
-//            System.gc();
-//            logger.info("Try active GC, time: " + (System.currentTimeMillis() - getStart));
+            msgBuffer = null;
+            System.gc();
+            logger.info("Try active GC, time: " + (System.currentTimeMillis() - getStart));
         }
         while (!persistDone) {
             logger.info("Waiting for all persist tasks to finish");
@@ -275,7 +275,9 @@ public class MiMessageStoreImpl extends MessageStore {
         for (int t = (int) (tMin / T_INDEX_SUMMARY_RATE * T_INDEX_SUMMARY_RATE); t < tMin; t++) {
             aIndex += tIndexDict[tIndex[t]];
         }
+        logger.info("aIndex: " + aIndex);
         long offsetForBody = (long) aIndex * BODY_BYTE_LENGTH;
+        logger.info("offsetForBody: " + offsetForBody);
 
         ByteBuffer bodyByteBufferForRead = threadBufferForReadBody.get();
         bodyByteBufferForRead.flip();
@@ -321,6 +323,9 @@ public class MiMessageStoreImpl extends MessageStore {
             getMsgCounter.addAndGet(result.size());
         }
         if (getId % GET_SAMPLE_RATE == 0) {
+            for (int i = 0; i < Math.min(100, result.size()); i++) {
+                logger.info(" result : t - " + result.get(i).getT() + ", a - " + result.get(i).getA());
+            }
             logger.info("Return sorted result with size: " + result.size()
                     + ", time: " + (System.currentTimeMillis() - getStart) + ", getId: " + getId);
         }

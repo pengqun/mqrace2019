@@ -100,9 +100,9 @@ public class MiMessageStoreImpl extends MessageStore {
             _putStart = putStart;
             _firstStart = putStart;
         }
-//        if (IS_TEST_RUN && _firstStart > 0 && (putStart - _firstStart) > 60 * 1000) {
-//            throw new RuntimeException(":)" + putId);
-//        }
+        if (IS_TEST_RUN && _firstStart > 0 && (putStart - _firstStart) > 60 * 1000) {
+            throw new RuntimeException(":)" + putId);
+        }
         synchronized (this) {
             memTable.add(message);
         }
@@ -332,32 +332,32 @@ public class MiMessageStoreImpl extends MessageStore {
 
     @Override
     public long getAvgValue(long aMin, long aMax, long tMin, long tMax) {
-//        long avgStart = System.currentTimeMillis();
-//        int avgId = avgCounter.getAndIncrement();
-//        if (IS_TEST_RUN && avgId == 0) {
-//            _getEnd = System.currentTimeMillis();
-//            _avgStart = _getEnd;
-//        }
-//        if (avgId % AVG_SAMPLE_RATE == 0) {
-//            logger.info("getAvgValue - tMin: " + tMin + ", tMax: " + tMax
-//                    + ", aMin: " + aMin + ", aMax: " + aMax + ", avgId: " + avgId);
-//            if (IS_TEST_RUN && avgId == TEST_BOUNDARY) {
-//                long putDuration = _putEnd - _putStart;
-//                long getDuration = _getEnd - _getStart;
-//                long avgDuration = System.currentTimeMillis() - _avgStart;
-//                int putScore = (int) (putCounter.get() / putDuration);
-//                int getScore = (int) (getMsgCounter.get() / getDuration);
-//                int avgScore = (int) (avgMsgCounter.get() / avgDuration);
-//                int totalScore = putScore + getScore + avgScore;
-//                logger.info("Test result: \n"
-//                        + "\tput: " + putCounter.get() + " / " + putDuration + "ms = " + putScore + "\n"
-//                        + "\tget: " + getMsgCounter.get() + " / " + getDuration + "ms = " + getScore + "\n"
-//                        + "\tavg: " + avgMsgCounter.get() + " / " + avgDuration + "ms = " + avgScore + "\n"
-//                        + "\ttotal: " + totalScore + "\n"
-//                );
-//                throw new RuntimeException(putScore + "/" + getScore + "/" + avgScore);
-//            }
-//        }
+        long avgStart = System.currentTimeMillis();
+        int avgId = avgCounter.getAndIncrement();
+        if (IS_TEST_RUN && avgId == 0) {
+            _getEnd = System.currentTimeMillis();
+            _avgStart = _getEnd;
+        }
+        if (avgId % AVG_SAMPLE_RATE == 0) {
+            logger.info("getAvgValue - tMin: " + tMin + ", tMax: " + tMax
+                    + ", aMin: " + aMin + ", aMax: " + aMax + ", avgId: " + avgId);
+            if (IS_TEST_RUN && avgId == TEST_BOUNDARY) {
+                long putDuration = _putEnd - _putStart;
+                long getDuration = _getEnd - _getStart;
+                long avgDuration = System.currentTimeMillis() - _avgStart;
+                int putScore = (int) (putCounter.get() / putDuration);
+                int getScore = (int) (getMsgCounter.get() / getDuration);
+                int avgScore = (int) (avgMsgCounter.get() / avgDuration);
+                int totalScore = putScore + getScore + avgScore;
+                logger.info("Test result: \n"
+                        + "\tput: " + putCounter.get() + " / " + putDuration + "ms = " + putScore + "\n"
+                        + "\tget: " + getMsgCounter.get() + " / " + getDuration + "ms = " + getScore + "\n"
+                        + "\tavg: " + avgMsgCounter.get() + " / " + avgDuration + "ms = " + avgScore + "\n"
+                        + "\ttotal: " + totalScore + "\n"
+                );
+                throw new RuntimeException(putScore + "/" + getScore + "/" + avgScore);
+            }
+        }
         long sum = 0;
         int count = 0;
 //        long skip = 0;
@@ -389,13 +389,13 @@ public class MiMessageStoreImpl extends MessageStore {
             }
         }
 
-//        if (avgId % AVG_SAMPLE_RATE == 0) {
-//            logger.info("Got " + count // + ", skip: " + skip
-//                    + ", time: " + (System.currentTimeMillis() - avgStart));
-//        }
-//        if (IS_TEST_RUN) {
-//            avgMsgCounter.addAndGet((int) count);
-//        }
+        if (avgId % AVG_SAMPLE_RATE == 0) {
+            logger.info("Got " + count // + ", skip: " + skip
+                    + ", time: " + (System.currentTimeMillis() - avgStart));
+        }
+        if (IS_TEST_RUN) {
+            avgMsgCounter.addAndGet((int) count);
+        }
         return count == 0 ? 0 : sum / count;
     }
 

@@ -58,7 +58,7 @@ public class MiMessageStoreImpl extends MessageStore {
     }
 
 //    private volatile NavigableMap<Long, Message> memTable = new TreeMap<>();
-    private volatile Map<Long, Message> memTable = new ConcurrentHashMap<>(MAX_MEM_TABLE_SIZE);
+    private volatile Map<Long, Message> memTable = new Hashtable<>(MAX_MEM_TABLE_SIZE);
 
     private ThreadPoolExecutor persistThreadPool = new ThreadPoolExecutor(1, 1,
             0L, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>());
@@ -125,7 +125,7 @@ public class MiMessageStoreImpl extends MessageStore {
             Map<Long, Message> frozenMemTable = memTable;
 //            Map<Long, Message> frozenMemTable = memTable;
 //            memTable = new TreeMap<>();
-            memTable = new ConcurrentHashMap<>(MAX_MEM_TABLE_SIZE);
+            memTable = new Hashtable<>(MAX_MEM_TABLE_SIZE);
 
             persistThreadPool.execute(() -> persistMemTable(frozenMemTable, finalCurrentMinT));
 //            logger.info("Submitted memTable persist task, time: "

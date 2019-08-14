@@ -58,7 +58,7 @@ public class MiMessageStoreImpl extends MessageStore {
     }
 
 //    private volatile NavigableMap<Long, Message> memTable = new TreeMap<>();
-    private volatile Map<Long, Message> memTable = new Hashtable<>(MAX_MEM_TABLE_SIZE);
+    private volatile Collection<Message> memTable = new TreeSet<>((o1, o2) -> 1);
 
     private ThreadPoolExecutor persistThreadPool = new ThreadPoolExecutor(1, 1,
             0L, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>());
@@ -103,10 +103,11 @@ public class MiMessageStoreImpl extends MessageStore {
         if (IS_TEST_RUN && _firstStart > 0 && (putStart - _firstStart) > 60 * 1000) {
             throw new RuntimeException(":)" + putId);
         }
-        long key = (message.getT() << 32) + putId;
-//        synchronized (this) {
-            memTable.put(key, message);
-//        }
+//        long key = (message.getT() << 32) + putId;
+        synchronized (this) {
+//            memTable.put(key, message);
+            memTable.add(message);
+        }
         if (putId % PUT_SAMPLE_RATE == 0) {
             logger.info("putMessage to memTable with t: " + message.getT() + ", a: " + message.getA()
                     + ", time: " + (System.currentTimeMillis() - putStart) + ", putId: " + putId);
@@ -122,10 +123,10 @@ public class MiMessageStoreImpl extends MessageStore {
             }
             int finalCurrentMinT = currentMinT;
 
-            Map<Long, Message> frozenMemTable = memTable;
 //            Map<Long, Message> frozenMemTable = memTable;
+            Collection<Message> frozenMemTable = memTable;
 //            memTable = new TreeMap<>();
-            memTable = new Hashtable<>(MAX_MEM_TABLE_SIZE);
+            memTable = new TreeSet<>((o1, o2) -> 1);
 
             persistThreadPool.execute(() -> persistMemTable(frozenMemTable, finalCurrentMinT));
 //            logger.info("Submitted memTable persist task, time: "
@@ -133,14 +134,14 @@ public class MiMessageStoreImpl extends MessageStore {
         }
     }
 
-    private void persistMemTable(Map<Long, Message> frozenMemTable, int currentMinT) {
+    private void persistMemTable(Collection<Message> frozenMemTable, int currentMinT) {
         long persistStart = System.currentTimeMillis();
         int persistId = persistCounter.getAndIncrement();
         if (persistId % PERSIST_SAMPLE_RATE == 0) {
             logger.info("Start persisting memTable with size: " + frozenMemTable.size()
                     + ", buffer index: " + bufferIndex + ", persistId: " + persistId);
         }
-        for (Message msg : frozenMemTable.values()) {
+        for (Message msg : frozenMemTable) {
             msgBuffer[bufferIndex++] = msg;
         }
         if (persistId % PERSIST_SAMPLE_RATE == 0) {

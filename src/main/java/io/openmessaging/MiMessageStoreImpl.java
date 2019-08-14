@@ -57,8 +57,7 @@ public class MiMessageStoreImpl extends MessageStore {
         }
     }
 
-//    private volatile NavigableMap<Long, Message> memTable = new TreeMap<>();
-    private volatile Collection<Message> memTable = new TreeSet<>((o1, o2) -> -1);
+    private volatile Collection<Message> memTable = new TreeSet<>((o1, o2) -> 0);
 
     private ThreadPoolExecutor persistThreadPool = new ThreadPoolExecutor(1, 1,
             0L, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>());
@@ -103,9 +102,7 @@ public class MiMessageStoreImpl extends MessageStore {
         if (IS_TEST_RUN && _firstStart > 0 && (putStart - _firstStart) > 60 * 1000) {
             throw new RuntimeException(":)" + putId);
         }
-//        long key = (message.getT() << 32) + putId;
         synchronized (this) {
-//            memTable.put(key, message);
             memTable.add(message);
         }
         if (putId % PUT_SAMPLE_RATE == 0) {
@@ -123,10 +120,8 @@ public class MiMessageStoreImpl extends MessageStore {
             }
             int finalCurrentMinT = currentMinT;
 
-//            Map<Long, Message> frozenMemTable = memTable;
             Collection<Message> frozenMemTable = memTable;
-//            memTable = new TreeMap<>();
-            memTable = new TreeSet<>((o1, o2) -> -1);
+            memTable = new TreeSet<>((o1, o2) -> 0);
 
             persistThreadPool.execute(() -> persistMemTable(frozenMemTable, finalCurrentMinT));
 //            logger.info("Submitted memTable persist task, time: "

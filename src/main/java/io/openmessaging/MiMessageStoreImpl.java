@@ -177,7 +177,7 @@ public class MiMessageStoreImpl extends MessageStore {
                 lastT = t;
                 aCount++;
 
-                if (t > currentMinT) {
+                if (t >= currentMinT) {
                     break;
                 }
 

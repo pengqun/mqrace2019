@@ -9,6 +9,7 @@ import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -56,8 +57,8 @@ public class MiMessageStoreImpl extends MessageStore {
         }
     }
 
-    private volatile NavigableMap<Long, Message> memTable = new TreeMap<>();
-//    private volatile Map<Long, Message> memTable = new ConcurrentHashMap<>();
+//    private volatile NavigableMap<Long, Message> memTable = new TreeMap<>();
+    private volatile Map<Long, Message> memTable = new ConcurrentHashMap<>(MAX_MEM_TABLE_SIZE);
 
     private ThreadPoolExecutor persistThreadPool = new ThreadPoolExecutor(1, 1,
             0L, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>());
@@ -99,13 +100,13 @@ public class MiMessageStoreImpl extends MessageStore {
             _putStart = putStart;
             _firstStart = putStart;
         }
-//        if (IS_TEST_RUN && _firstStart > 0 && (putStart - _firstStart) > 60 * 1000) {
-//            throw new RuntimeException(":)" + putId);
-//        }
-        long key = (message.getT() << 32) + putId;
-        synchronized (this) {
-            memTable.put(key, message);
+        if (IS_TEST_RUN && _firstStart > 0 && (putStart - _firstStart) > 60 * 1000) {
+            throw new RuntimeException(":)" + putId);
         }
+        long key = (message.getT() << 32) + putId;
+//        synchronized (this) {
+            memTable.put(key, message);
+//        }
         if (putId % PUT_SAMPLE_RATE == 0) {
             logger.info("putMessage to memTable with t: " + message.getT() + ", a: " + message.getA()
                     + ", time: " + (System.currentTimeMillis() - putStart) + ", putId: " + putId);
@@ -121,10 +122,10 @@ public class MiMessageStoreImpl extends MessageStore {
             }
             int finalCurrentMinT = currentMinT;
 
-            NavigableMap<Long, Message> frozenMemTable = memTable;
+            Map<Long, Message> frozenMemTable = memTable;
 //            Map<Long, Message> frozenMemTable = memTable;
-            memTable = new TreeMap<>();
-//            memTable = new ConcurrentHashMap<>();
+//            memTable = new TreeMap<>();
+            memTable = new ConcurrentHashMap<>(MAX_MEM_TABLE_SIZE);
 
             persistThreadPool.execute(() -> persistMemTable(frozenMemTable, finalCurrentMinT));
 //            logger.info("Submitted memTable persist task, time: "
@@ -167,7 +168,7 @@ public class MiMessageStoreImpl extends MessageStore {
                         id = tIndexDictId++;
                         tIndexDictCount2Id[aCount] = id;
                         tIndexDictId2Count[id] = aCount;
-                        logger.info("Set t index dict: " + aCount + " -> " + id);
+//                        logger.info("Set t index dict: " + aCount + " -> " + id);
                     }
                     tIndex[lastT] = id;
                     aCount = 0;
@@ -206,7 +207,7 @@ public class MiMessageStoreImpl extends MessageStore {
                     id = tIndexDictId++;
                     tIndexDictCount2Id[aCount] = id;
                     tIndexDictId2Count[id] = aCount;
-                    logger.info("Set t index dict: " + aCount + " -> " + id);
+//                    logger.info("Set t index dict: " + aCount + " -> " + id);
                 }
                 tIndex[lastT] = id;
             }
@@ -278,9 +279,7 @@ public class MiMessageStoreImpl extends MessageStore {
         for (int t = (int) (tMin / T_INDEX_SUMMARY_RATE * T_INDEX_SUMMARY_RATE); t < tMin; t++) {
             aIndex += tIndexDictId2Count[tIndex[t]];
         }
-//        logger.info("aIndex: " + aIndex);
         long offsetForBody = (long) aIndex * BODY_BYTE_LENGTH;
-//        logger.info("offsetForBody: " + offsetForBody);
 
         ByteBuffer bodyByteBufferForRead = threadBufferForReadBody.get();
         bodyByteBufferForRead.flip();

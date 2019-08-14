@@ -46,7 +46,7 @@ public class MiMessageStoreImpl extends MessageStore {
 
     private static FileChannel bodyFileChannel;
     private static ByteBuffer bodyByteBufferForWrite = ByteBuffer.allocateDirect(WRITE_BODY_BUFFER_SIZE);
-//    private static ByteBuffer bodyMByteBufferForWrite = null;
+//    private static ByteBuffer bodyMByteBufferForWrite;
 
     static {
         logger.info("MiMessageStoreImpl loaded");
@@ -58,7 +58,7 @@ public class MiMessageStoreImpl extends MessageStore {
         }
     }
 
-    private volatile Collection<Message> memTable = new TreeSet<>((o1, o2) -> 0);
+    private volatile Collection<Message> memTable = new TreeSet<>((o1, o2) -> -1);
 
     private ThreadPoolExecutor persistThreadPool = new ThreadPoolExecutor(1, 1,
             0L, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>());
@@ -122,7 +122,7 @@ public class MiMessageStoreImpl extends MessageStore {
             int finalCurrentMinT = currentMinT;
 
             Collection<Message> frozenMemTable = memTable;
-            memTable = new TreeSet<>((o1, o2) -> 0);
+            memTable = new TreeSet<>((o1, o2) -> -1);
 
             persistThreadPool.execute(() -> persistMemTable(frozenMemTable, finalCurrentMinT));
 //            logger.info("Submitted memTable persist task, time: "

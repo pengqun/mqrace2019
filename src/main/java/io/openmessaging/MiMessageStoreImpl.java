@@ -26,7 +26,7 @@ public class MiMessageStoreImpl extends MessageStore {
 
     private static final Logger logger = Logger.getLogger(MiMessageStoreImpl.class);
 
-    private static final int MAX_MEM_TABLE_SIZE = 30 * 10000;
+    private static final int MAX_MEM_TABLE_SIZE = 20 * 10000;
 
     private static final int T_INDEX_SIZE = 1000 * 1024 * 1024;
     private static final int T_INDEX_SUMMARY_RATE = 32;

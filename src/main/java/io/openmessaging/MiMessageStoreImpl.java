@@ -9,7 +9,6 @@ import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -29,8 +28,8 @@ public class MiMessageStoreImpl extends MessageStore {
     private static final int MAX_MEM_TABLE_SIZE = 10 * 10000;
 
     private static final int T_INDEX_SIZE = 1000 * 1024 * 1024;
-    private static final int T_INDEX_SUMMARY_RATE = 64;
-    private static final int T_WRITE_ARRAY_SIZE = 300 * 10000;
+    private static final int T_INDEX_SUMMARY_RATE = 32;
+    private static final int T_WRITE_ARRAY_SIZE = 400 * 10000;
 
     private static final int A_DIFF_BASE_OFFSET = 10000;
     private static final int A_DIFF_HALF_SIZE = 1000 * 1024 * 1024;
@@ -40,7 +39,7 @@ public class MiMessageStoreImpl extends MessageStore {
 
     private static final int PERSIST_SAMPLE_RATE = 100;
     private static final int PUT_SAMPLE_RATE = 10000000;
-    private static final int GET_SAMPLE_RATE = 1;
+    private static final int GET_SAMPLE_RATE = 1000;
     private static final int AVG_SAMPLE_RATE = 1000;
 
     private static FileChannel bodyFileChannel;
@@ -80,7 +79,8 @@ public class MiMessageStoreImpl extends MessageStore {
     private short[] aFirstHalf = new short[A_DIFF_HALF_SIZE];
     private ByteBuffer aLastHalf = ByteBuffer.allocateDirect(A_DIFF_HALF_SIZE * KEY_A_BYTE_LENGTH);
 
-    private byte[] tIndexDict = new byte[MAX_T_INDEX_SIZE];
+    private byte[] tIndexDictCount2Id = new byte[MAX_T_INDEX_SIZE];
+    private int[] tIndexDictId2Count = new int[128];
     private byte tIndexDictId = 1;
 
     private ThreadLocal<ByteBuffer> threadBufferForReadBody = ThreadLocal.withInitial(()
@@ -161,10 +161,11 @@ public class MiMessageStoreImpl extends MessageStore {
 
                 // update t index
                 if (lastT != -1 && t != lastT) {
-                    byte id = tIndexDict[aCount];
+                    byte id = tIndexDictCount2Id[aCount];
                     if (id == 0) {
                         id = tIndexDictId++;
-                        tIndexDict[aCount] = id;
+                        tIndexDictCount2Id[aCount] = id;
+                        tIndexDictId2Count[id] = aCount;
                         logger.info("Set t index dict: " + aCount + " -> " + id);
                     }
                     tIndex[lastT] = id;
@@ -199,10 +200,11 @@ public class MiMessageStoreImpl extends MessageStore {
 
             // update final t index
             if (currentMinT == Integer.MAX_VALUE && aCount > 0) {
-                byte id = tIndexDict[aCount];
+                byte id = tIndexDictCount2Id[aCount];
                 if (id == 0) {
                     id = tIndexDictId++;
-                    tIndexDict[aCount] = id;
+                    tIndexDictCount2Id[aCount] = id;
+                    tIndexDictId2Count[id] = aCount;
                     logger.info("Set t index dict: " + aCount + " -> " + id);
                 }
                 tIndex[lastT] = id;
@@ -273,17 +275,17 @@ public class MiMessageStoreImpl extends MessageStore {
 
         int aIndex = tSummary[(int) (tMin / T_INDEX_SUMMARY_RATE)];
         for (int t = (int) (tMin / T_INDEX_SUMMARY_RATE * T_INDEX_SUMMARY_RATE); t < tMin; t++) {
-            aIndex += tIndexDict[tIndex[t]];
+            aIndex += tIndexDictId2Count[tIndex[t]];
         }
-        logger.info("aIndex: " + aIndex);
+//        logger.info("aIndex: " + aIndex);
         long offsetForBody = (long) aIndex * BODY_BYTE_LENGTH;
-        logger.info("offsetForBody: " + offsetForBody);
+//        logger.info("offsetForBody: " + offsetForBody);
 
         ByteBuffer bodyByteBufferForRead = threadBufferForReadBody.get();
         bodyByteBufferForRead.flip();
 
         for (int t = (int) tMin; t <= tMax; t++) {
-            int aCount = tIndexDict[tIndex[t]];
+            int aCount = tIndexDictId2Count[tIndex[t]];
             while (aCount-- > 0) {
                 if (!bodyByteBufferForRead.hasRemaining()) {
                     try {
@@ -312,7 +314,6 @@ public class MiMessageStoreImpl extends MessageStore {
                     result.add(msg);
                 } else {
                     bodyByteBufferForRead.position(bodyByteBufferForRead.position() + BODY_BYTE_LENGTH);
-//                  skip++;
                 }
             }
         }
@@ -323,9 +324,9 @@ public class MiMessageStoreImpl extends MessageStore {
             getMsgCounter.addAndGet(result.size());
         }
         if (getId % GET_SAMPLE_RATE == 0) {
-            for (int i = 0; i < Math.min(100, result.size()); i++) {
-                logger.info(" result : t - " + result.get(i).getT() + ", a - " + result.get(i).getA());
-            }
+//            for (int i = 0; i < Math.min(100, result.size()); i++) {
+//                logger.info(" result : t - " + result.get(i).getT() + ", a - " + result.get(i).getA());
+//            }
             logger.info("Return sorted result with size: " + result.size()
                     + ", time: " + (System.currentTimeMillis() - getStart) + ", getId: " + getId);
         }
@@ -366,11 +367,11 @@ public class MiMessageStoreImpl extends MessageStore {
 
         int aIndex = tSummary[(int) (tMin / T_INDEX_SUMMARY_RATE)];
         for (int t = (int) (tMin / T_INDEX_SUMMARY_RATE * T_INDEX_SUMMARY_RATE); t < tMin; t++) {
-            aIndex += tIndexDict[tIndex[t]];
+            aIndex += tIndexDictId2Count[tIndex[t]];
         }
 
         for (int t = (int) tMin; t <= tMax; t++) {
-            int aCount = tIndexDict[tIndex[t]];
+            int aCount = tIndexDictId2Count[tIndex[t]];
             while (aCount-- > 0) {
                 long aDiff;
                 if (aIndex < A_DIFF_HALF_SIZE) {

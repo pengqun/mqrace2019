@@ -33,6 +33,7 @@ public class MiMessageStoreImpl extends MessageStore {
 
     private static final int A_DIFF_BASE_OFFSET = 10000;
     private static final int A_DIFF_HALF_SIZE = 1000 * 1024 * 1024;
+//    private static final int A_DIFF_HALF_SIZE = 1000000;
 
     private static final int WRITE_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 1024;
     private static final int READ_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 1024;
@@ -186,7 +187,7 @@ public class MiMessageStoreImpl extends MessageStore {
                 if (msgCounter < A_DIFF_HALF_SIZE) {
                     aFirstHalf[msgCounter] = a;
                 } else {
-                    aLastHalf.putShort((msgCounter - A_DIFF_HALF_SIZE) * KEY_A_BYTE_LENGTH, a);
+                    aLastHalf.putShort(a);
                 }
                 msgCounter++;
 

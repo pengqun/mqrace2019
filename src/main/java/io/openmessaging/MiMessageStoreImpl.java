@@ -46,6 +46,7 @@ public class MiMessageStoreImpl extends MessageStore {
 
     private static FileChannel bodyFileChannel;
     private static ByteBuffer bodyByteBufferForWrite = ByteBuffer.allocateDirect(WRITE_BODY_BUFFER_SIZE);
+//    private static ByteBuffer bodyMByteBufferForWrite = null;
 
     static {
         logger.info("MiMessageStoreImpl loaded");
@@ -99,9 +100,9 @@ public class MiMessageStoreImpl extends MessageStore {
             _putStart = putStart;
             _firstStart = putStart;
         }
-        if (IS_TEST_RUN && _firstStart > 0 && (putStart - _firstStart) > 60 * 1000) {
-            throw new RuntimeException(":)" + putId);
-        }
+//        if (IS_TEST_RUN && _firstStart > 0 && (putStart - _firstStart) > 60 * 1000) {
+//            throw new RuntimeException(":)" + putId);
+//        }
         synchronized (this) {
             memTable.add(message);
         }

@@ -29,7 +29,7 @@ public class MiMessageStoreImpl extends MessageStore {
     private static final int MAX_MEM_TABLE_SIZE = 10 * 10000;
 
     private static final int T_INDEX_SIZE = 1000 * 1024 * 1024;
-    private static final int T_INDEX_SUMMARY_RATE = 32;
+    private static final int T_INDEX_SUMMARY_RATE = 8;
     private static final int T_WRITE_ARRAY_SIZE = 400 * 10000;
 
     private static final int A_DIFF_BASE_OFFSET = 10000;

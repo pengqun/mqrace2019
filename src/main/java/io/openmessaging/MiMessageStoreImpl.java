@@ -197,7 +197,6 @@ public class MiMessageStoreImpl extends MessageStore {
                     aCount = 0;
                 }
 
-
                 lastT = t;
                 aBuffer[aCount++] = a;
 
@@ -257,7 +256,13 @@ public class MiMessageStoreImpl extends MessageStore {
             flushBuffer(bodyFileChannel, bodyByteBufferForWrite);
             persistDone = true;
             persistThreadPool.shutdown();
-            logger.info("Flushed all memTables, time: " + (System.currentTimeMillis() - getStart));
+            try {
+                logger.info("Flushed all memTables, msg count: " + putCounter.get()
+                        + ", file size: " + bodyFileChannel.size()
+                        + ", time: " + (System.currentTimeMillis() - getStart));
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
 
             msgBuffer1 = null;
             msgBuffer2 = null;
@@ -286,45 +291,82 @@ public class MiMessageStoreImpl extends MessageStore {
         ByteBuffer bodyByteBufferForRead = threadBufferForReadBody.get();
         bodyByteBufferForRead.flip();
 
+//        for (int t = (int) tMin; t <= tMax; t++) {
+//            int aCount = tIndexDictId2Count[tIndex[t]];
+//            if (aCount > 2) {
+//                long curMax = getA(t, aIndex + aCount - 1);
+//                if (curMax < aMin) {
+//                    aIndex += aCount;
+//                    bodyByteBufferForRead.position(bodyByteBufferForRead.position()
+//                            + Math.min(bodyByteBufferForRead.remaining(), aCount * BODY_BYTE_LENGTH));
+//                    continue;
+//                }
+//            }
+//            while (aCount > 0) {
+//                long a = getA(t, aIndex);
+//                if (a > aMax) {
+//                    aIndex += aCount;
+//                    bodyByteBufferForRead.position(bodyByteBufferForRead.position()
+//                            + Math.min(bodyByteBufferForRead.remaining(), aCount * BODY_BYTE_LENGTH));
+//                    break;
+//                }
+//                if (a < aMin) {
+//                    bodyByteBufferForRead.position(bodyByteBufferForRead.position() + BODY_BYTE_LENGTH);
+//                } else {
+//                    if (!bodyByteBufferForRead.hasRemaining()) {
+//                        try {
+//                            bodyByteBufferForRead.clear();
+//                            bodyFileChannel.read(bodyByteBufferForRead, (long) aIndex * BODY_BYTE_LENGTH);
+//                            bodyByteBufferForRead.flip();
+//                        } catch (IOException e) {
+//                            e.printStackTrace();
+//                        }
+//                    }
+//                    byte[] body = new byte[BODY_BYTE_LENGTH];
+//                    bodyByteBufferForRead.get(body);
+//                    Message msg = new Message(a, t, body);
+//                    result.add(msg);
+//                }
+//
+//                aIndex++;
+//                aCount--;
+//            }
+//        }
+
+        long offsetForBody = (long) aIndex * BODY_BYTE_LENGTH;
+//        logger.info("offsetForBody: " + offsetForBody);
+
         for (int t = (int) tMin; t <= tMax; t++) {
             int aCount = tIndexDictId2Count[tIndex[t]];
-            if (aCount > 2) {
-                long curMax = getA(t, aIndex + aCount - 1);
-                if (curMax < aMin) {
-                    aIndex += aCount;
-                    bodyByteBufferForRead.position(bodyByteBufferForRead.position()
-                            + Math.min(bodyByteBufferForRead.remaining(), aCount * BODY_BYTE_LENGTH));
-                    continue;
-                }
-            }
-            while (aCount > 0) {
-                long a = getA(t, aIndex);
-                if (a > aMax) {
-                    aIndex += aCount;
-                    bodyByteBufferForRead.position(bodyByteBufferForRead.position()
-                            + Math.min(bodyByteBufferForRead.remaining(), aCount * BODY_BYTE_LENGTH));
-                    break;
-                }
-                if (a < aMin) {
-                    bodyByteBufferForRead.position(bodyByteBufferForRead.position() + BODY_BYTE_LENGTH);
-                } else {
-                    if (!bodyByteBufferForRead.hasRemaining()) {
-                        try {
-                            bodyByteBufferForRead.clear();
-                            bodyFileChannel.read(bodyByteBufferForRead, (long) aIndex * BODY_BYTE_LENGTH);
-                            bodyByteBufferForRead.flip();
-                        } catch (IOException e) {
-                            e.printStackTrace();
-                        }
+            while (aCount-- > 0) {
+                if (!bodyByteBufferForRead.hasRemaining()) {
+                    try {
+                        bodyByteBufferForRead.clear();
+                        bodyFileChannel.read(bodyByteBufferForRead, offsetForBody);
+                        bodyByteBufferForRead.flip();
+                    } catch (IOException e) {
+                        e.printStackTrace();
                     }
+                    offsetForBody += READ_BODY_BUFFER_SIZE;
+                }
+
+                long aDiff;
+                if (aIndex < A_DIFF_HALF_SIZE) {
+                    aDiff = aFirstHalf[aIndex];
+                } else {
+                    aDiff = aLastHalf.getShort((aIndex - A_DIFF_HALF_SIZE) * KEY_A_BYTE_LENGTH);
+                }
+                aIndex++;
+
+                long a = aDiff + t + A_DIFF_BASE_OFFSET;
+                if (a >= aMin && a <= aMax) {
                     byte[] body = new byte[BODY_BYTE_LENGTH];
                     bodyByteBufferForRead.get(body);
                     Message msg = new Message(a, t, body);
                     result.add(msg);
+                } else {
+                    bodyByteBufferForRead.position(bodyByteBufferForRead.position() + BODY_BYTE_LENGTH);
                 }
-
-                aIndex++;
-                aCount--;
             }
         }
 

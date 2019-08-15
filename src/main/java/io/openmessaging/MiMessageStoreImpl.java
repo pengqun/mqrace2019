@@ -38,7 +38,7 @@ public class MiMessageStoreImpl extends MessageStore {
     private static final int WRITE_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 1024;
     private static final int READ_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 1024;
 
-    private static final int PERSIST_SAMPLE_RATE = 100;
+    private static final int PERSIST_SAMPLE_RATE = 1;
     private static final int PUT_SAMPLE_RATE = 10000000;
     private static final int GET_SAMPLE_RATE = 1000;
     private static final int AVG_SAMPLE_RATE = 1000;
@@ -83,6 +83,9 @@ public class MiMessageStoreImpl extends MessageStore {
     private byte[] tIndexDictCount2Id = new byte[MAX_T_INDEX_SIZE];
     private int[] tIndexDictId2Count = new int[128];
     private byte tIndexDictId = 1;
+    private short[] aBuffer = new short[MAX_T_INDEX_SIZE];
+
+    private Message sentinelMessage = new Message(Integer.MAX_VALUE, Integer.MAX_VALUE, null);
 
     private ThreadLocal<ByteBuffer> threadBufferForReadBody = ThreadLocal.withInitial(()
             -> ByteBuffer.allocateDirect(READ_BODY_BUFFER_SIZE));
@@ -157,16 +160,16 @@ public class MiMessageStoreImpl extends MessageStore {
                     + ", time: " + (System.currentTimeMillis() - persistStart) + ", persistId: " + persistId);
         }
         if (bufferIndex > 0) {
-            int lastT = -1;
+            int lastT = (int) targetBuffer[bufferIndex - 1].getT();
             int aCount = 0;
-            int index;
-            for (index = bufferIndex - 1; index >= 0; index--) {
-                Message msg = targetBuffer[index];
+            int index = bufferIndex - 1;
+            while (true) {
+                Message msg = index >= 0 ? targetBuffer[index] : sentinelMessage;
                 int t = (int) msg.getT();
                 short a = (short) (msg.getA() - t - A_DIFF_BASE_OFFSET);
 
-                // update t index
-                if (lastT != -1 && t != lastT) {
+                if (t != lastT) {
+                    // update t index
                     byte id = tIndexDictCount2Id[aCount];
                     if (id == 0) {
                         id = tIndexDictId++;
@@ -175,46 +178,41 @@ public class MiMessageStoreImpl extends MessageStore {
 //                        logger.info("Set t index dict: " + aCount + " -> " + id);
                     }
                     tIndex[lastT] = id;
+
+                    // sort and store a (diff)
+                    Arrays.sort(aBuffer, 0, aCount);
+                    for (int k = 0; k < aCount; k++) {
+                        if (msgCounter < A_DIFF_HALF_SIZE) {
+                            aFirstHalf[msgCounter] = aBuffer[k];
+                        } else {
+                            aLastHalf.putShort(aBuffer[k]);
+                        }
+                        msgCounter++;
+                    }
+
+                    // update t index summary
+                    if (t % T_INDEX_SUMMARY_RATE == 0) {
+                        tSummary[t / T_INDEX_SUMMARY_RATE] = msgCounter;
+                    }
                     aCount = 0;
                 }
-                // update t index summary
-                if (t != lastT && t % T_INDEX_SUMMARY_RATE == 0) {
-                    tSummary[t / T_INDEX_SUMMARY_RATE] = msgCounter;
-                }
+
+
                 lastT = t;
-                aCount++;
+                aBuffer[aCount++] = a;
 
                 if (t >= currentMinT) {
                     break;
                 }
-
-                // store a (diff)
-                if (msgCounter < A_DIFF_HALF_SIZE) {
-                    aFirstHalf[msgCounter] = a;
-                } else {
-                    aLastHalf.putShort(a);
-                }
-                msgCounter++;
 
                 // persist body
                 if (!bodyByteBufferForWrite.hasRemaining()) {
                     flushBuffer(bodyFileChannel, bodyByteBufferForWrite);
                 }
                 bodyByteBufferForWrite.put(msg.getBody());
+                index--;
             }
             bufferIndex = index + 1;
-
-            // update final t index
-            if (currentMinT == Integer.MAX_VALUE && aCount > 0) {
-                byte id = tIndexDictCount2Id[aCount];
-                if (id == 0) {
-                    id = tIndexDictId++;
-                    tIndexDictCount2Id[aCount] = id;
-                    tIndexDictId2Count[id] = aCount;
-//                    logger.info("Set t index dict: " + aCount + " -> " + id);
-                }
-                tIndex[lastT] = id;
-            }
         }
         if (persistId % PERSIST_SAMPLE_RATE == 0) {
             logger.info("Done persisting memTable with size: " + frozenMemTable.size()
@@ -312,13 +310,21 @@ public class MiMessageStoreImpl extends MessageStore {
                 aIndex++;
 
                 long a = aDiff + t + A_DIFF_BASE_OFFSET;
-                if (a >= aMin && a <= aMax) {
+                if (a > aMax) {
+                    int remaining = bodyByteBufferForRead.remaining();
+                    int canSkip = (aCount + 1) * BODY_BYTE_LENGTH;
+                    bodyByteBufferForRead.position(bodyByteBufferForRead.position() + Math.min(remaining, canSkip));
+                    if (canSkip > remaining) {
+                        offsetForBody += canSkip - remaining;
+                    }
+                    break;
+                } else if (a < aMin) {
+                    bodyByteBufferForRead.position(bodyByteBufferForRead.position() + BODY_BYTE_LENGTH);
+                } else {
                     byte[] body = new byte[BODY_BYTE_LENGTH];
                     bodyByteBufferForRead.get(body);
                     Message msg = new Message(a, t, body);
                     result.add(msg);
-                } else {
-                    bodyByteBufferForRead.position(bodyByteBufferForRead.position() + BODY_BYTE_LENGTH);
                 }
             }
         }
@@ -340,35 +346,34 @@ public class MiMessageStoreImpl extends MessageStore {
 
     @Override
     public long getAvgValue(long aMin, long aMax, long tMin, long tMax) {
-        long avgStart = System.currentTimeMillis();
-        int avgId = avgCounter.getAndIncrement();
-        if (IS_TEST_RUN && avgId == 0) {
-            _getEnd = System.currentTimeMillis();
-            _avgStart = _getEnd;
-        }
-        if (avgId % AVG_SAMPLE_RATE == 0) {
-            logger.info("getAvgValue - tMin: " + tMin + ", tMax: " + tMax
-                    + ", aMin: " + aMin + ", aMax: " + aMax + ", avgId: " + avgId);
-            if (IS_TEST_RUN && avgId == TEST_BOUNDARY) {
-                long putDuration = _putEnd - _putStart;
-                long getDuration = _getEnd - _getStart;
-                long avgDuration = System.currentTimeMillis() - _avgStart;
-                int putScore = (int) (putCounter.get() / putDuration);
-                int getScore = (int) (getMsgCounter.get() / getDuration);
-                int avgScore = (int) (avgMsgCounter.get() / avgDuration);
-                int totalScore = putScore + getScore + avgScore;
-                logger.info("Test result: \n"
-                        + "\tput: " + putCounter.get() + " / " + putDuration + "ms = " + putScore + "\n"
-                        + "\tget: " + getMsgCounter.get() + " / " + getDuration + "ms = " + getScore + "\n"
-                        + "\tavg: " + avgMsgCounter.get() + " / " + avgDuration + "ms = " + avgScore + "\n"
-                        + "\ttotal: " + totalScore + "\n"
-                );
-                throw new RuntimeException(putScore + "/" + getScore + "/" + avgScore);
-            }
-        }
+//        long avgStart = System.currentTimeMillis();
+//        int avgId = avgCounter.getAndIncrement();
+//        if (IS_TEST_RUN && avgId == 0) {
+//            _getEnd = System.currentTimeMillis();
+//            _avgStart = _getEnd;
+//        }
+//        if (avgId % AVG_SAMPLE_RATE == 0) {
+//            logger.info("getAvgValue - tMin: " + tMin + ", tMax: " + tMax
+//                    + ", aMin: " + aMin + ", aMax: " + aMax + ", avgId: " + avgId);
+//            if (IS_TEST_RUN && avgId == TEST_BOUNDARY) {
+//                long putDuration = _putEnd - _putStart;
+//                long getDuration = _getEnd - _getStart;
+//                long avgDuration = System.currentTimeMillis() - _avgStart;
+//                int putScore = (int) (putCounter.get() / putDuration);
+//                int getScore = (int) (getMsgCounter.get() / getDuration);
+//                int avgScore = (int) (avgMsgCounter.get() / avgDuration);
+//                int totalScore = putScore + getScore + avgScore;
+//                logger.info("Test result: \n"
+//                        + "\tput: " + putCounter.get() + " / " + putDuration + "ms = " + putScore + "\n"
+//                        + "\tget: " + getMsgCounter.get() + " / " + getDuration + "ms = " + getScore + "\n"
+//                        + "\tavg: " + avgMsgCounter.get() + " / " + avgDuration + "ms = " + avgScore + "\n"
+//                        + "\ttotal: " + totalScore + "\n"
+//                );
+//                throw new RuntimeException(putScore + "/" + getScore + "/" + avgScore);
+//            }
+//        }
         long sum = 0;
         int count = 0;
-//        long skip = 0;
 
         int aIndex = tSummary[(int) (tMin / T_INDEX_SUMMARY_RATE)];
         for (int t = (int) (tMin / T_INDEX_SUMMARY_RATE * T_INDEX_SUMMARY_RATE); t < tMin; t++) {
@@ -377,34 +382,46 @@ public class MiMessageStoreImpl extends MessageStore {
 
         for (int t = (int) tMin; t <= tMax; t++) {
             int aCount = tIndexDictId2Count[tIndex[t]];
-            while (aCount-- > 0) {
-                long aDiff;
-                if (aIndex < A_DIFF_HALF_SIZE) {
-                    aDiff = aFirstHalf[aIndex];
-                } else {
-                    aDiff = aLastHalf.getShort((aIndex - A_DIFF_HALF_SIZE) * KEY_A_BYTE_LENGTH);
+            if (aCount > 2) {
+                long curMax = getA(t, aIndex + aCount - 1);
+                if (curMax < aMin) {
+                    aIndex += aCount;
+                    continue;
                 }
-                aIndex++;
-
-                long a = aDiff + t + A_DIFF_BASE_OFFSET;
+            }
+            while (aCount > 0) {
+                long a = getA(t, aIndex);
+                if (a > aMax) {
+                    aIndex += aCount;
+                    break;
+                }
                 if (a >= aMin && a <= aMax) {
                     sum += a;
                     count++;
                 }
-//                else {
-//                  skip++;
-//                }
+                aIndex++;
+                aCount--;
             }
         }
 
-        if (avgId % AVG_SAMPLE_RATE == 0) {
-            logger.info("Got " + count // + ", skip: " + skip
-                    + ", time: " + (System.currentTimeMillis() - avgStart));
-        }
-        if (IS_TEST_RUN) {
-            avgMsgCounter.addAndGet((int) count);
-        }
+//        if (avgId % AVG_SAMPLE_RATE == 0) {
+//            logger.info("Got " + count // + ", skip: " + skip
+//                    + ", time: " + (System.currentTimeMillis() - avgStart));
+//        }
+//        if (IS_TEST_RUN) {
+//            avgMsgCounter.addAndGet((int) count);
+//        }
         return count == 0 ? 0 : sum / count;
+    }
+
+    private long getA(long t, int index) {
+        long aDiff;
+        if (index < A_DIFF_HALF_SIZE) {
+            aDiff = aFirstHalf[index];
+        } else {
+            aDiff = aLastHalf.getShort((index - A_DIFF_HALF_SIZE) * KEY_A_BYTE_LENGTH);
+        }
+        return aDiff + t + A_DIFF_BASE_OFFSET;
     }
 
     private AtomicLong getMsgCounter = new AtomicLong(0);

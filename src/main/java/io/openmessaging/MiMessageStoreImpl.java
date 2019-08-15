@@ -43,22 +43,20 @@ public class MiMessageStoreImpl extends MessageStore {
     private static final int GET_SAMPLE_RATE = 1000;
     private static final int AVG_SAMPLE_RATE = 1000;
 
-    private static RandomAccessFile bodyFile;
     private static FileChannel bodyFileChannel;
     private static ByteBuffer bodyByteBufferForWrite = ByteBuffer.allocateDirect(WRITE_BODY_BUFFER_SIZE);
-//    private static ByteBuffer bodyMByteBufferForWrite;
 
     static {
         logger.info("MiMessageStoreImpl loaded");
         try {
-            bodyFile = new RandomAccessFile(Constants.DATA_DIR + "body.data", "rw");
+            RandomAccessFile bodyFile = new RandomAccessFile(Constants.DATA_DIR + "body.data", "rw");
             bodyFileChannel = bodyFile.getChannel();
         } catch (FileNotFoundException e) {
             e.printStackTrace();
         }
     }
 
-    private volatile Collection<Message> memTable = new TreeSet<>((o1, o2) -> -1);
+    private volatile NavigableMap<Long, Message> memTable = new TreeMap<>((Collections.reverseOrder()));
 
     private ThreadPoolExecutor persistThreadPool = new ThreadPoolExecutor(1, 1,
             0L, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>());
@@ -70,7 +68,8 @@ public class MiMessageStoreImpl extends MessageStore {
 
     private volatile boolean persistDone = false;
 
-    private Message[] msgBuffer = new Message[T_WRITE_ARRAY_SIZE];
+    private Message[] msgBuffer1 = new Message[T_WRITE_ARRAY_SIZE];
+    private Message[] msgBuffer2 = new Message[T_WRITE_ARRAY_SIZE];
     private int bufferIndex = 0;
 
     private byte[] tIndex = new byte[T_INDEX_SIZE];
@@ -99,17 +98,17 @@ public class MiMessageStoreImpl extends MessageStore {
             _putStart = putStart;
             _firstStart = putStart;
         }
-        if (IS_TEST_RUN && _firstStart > 0 && (putStart - _firstStart) > 5 * 60 * 1000) {
-            throw new RuntimeException(":)" + putId);
+        if (IS_TEST_RUN && _firstStart > 0 && (putStart - _firstStart) > 60 * 1000) {
+            throw new RuntimeException(":)" + putId + "!");
         }
+        long key = (message.getT() << 32) + putId;
         synchronized (this) {
-            memTable.add(message);
+            memTable.put(key, message);
         }
         if (putId % PUT_SAMPLE_RATE == 0) {
             logger.info("putMessage to memTable with t: " + message.getT() + ", a: " + message.getA()
                     + ", time: " + (System.currentTimeMillis() - putStart) + ", putId: " + putId);
         }
-
         currentT[threadId.get()] = (int) message.getT();
 
         if ((putId + 1) % MAX_MEM_TABLE_SIZE == 0) {
@@ -120,8 +119,8 @@ public class MiMessageStoreImpl extends MessageStore {
             }
             int finalCurrentMinT = currentMinT;
 
-            Collection<Message> frozenMemTable = memTable;
-            memTable = new TreeSet<>((o1, o2) -> -1);
+            NavigableMap<Long, Message> frozenMemTable = memTable;
+            memTable = new TreeMap<>((Collections.reverseOrder()));
 
             persistThreadPool.execute(() -> persistMemTable(frozenMemTable, finalCurrentMinT));
 //            logger.info("Submitted memTable persist task, time: "
@@ -129,31 +128,40 @@ public class MiMessageStoreImpl extends MessageStore {
         }
     }
 
-    private void persistMemTable(Collection<Message> frozenMemTable, int currentMinT) {
+    private void persistMemTable(Map<Long, Message> frozenMemTable, int currentMinT) {
         long persistStart = System.currentTimeMillis();
         int persistId = persistCounter.getAndIncrement();
         if (persistId % PERSIST_SAMPLE_RATE == 0) {
             logger.info("Start persisting memTable with size: " + frozenMemTable.size()
                     + ", buffer index: " + bufferIndex + ", persistId: " + persistId);
         }
-        for (Message msg : frozenMemTable) {
-            msgBuffer[bufferIndex++] = msg;
+
+        Message[] sourceBuffer = persistId % 2 == 0? msgBuffer1 : msgBuffer2;
+        Message[] targetBuffer = persistId % 2 == 1? msgBuffer1 : msgBuffer2;
+
+        int i = 0;
+        int j = 0;
+        for (Message message : frozenMemTable.values()) {
+            while (i < bufferIndex && sourceBuffer[i].getT() >= message.getT()) {
+                targetBuffer[j++] = sourceBuffer[i++];
+            }
+            targetBuffer[j++] = message;
         }
+        while (i < bufferIndex) {
+            targetBuffer[j++] = sourceBuffer[i++];
+        }
+        bufferIndex = j;
+
         if (persistId % PERSIST_SAMPLE_RATE == 0) {
-            logger.info("Copied memTable to buffer with index: " + bufferIndex
+            logger.info("Copied memTable with size: " + frozenMemTable.size() + " to buffer with index: " + bufferIndex
                     + ", time: " + (System.currentTimeMillis() - persistStart) + ", persistId: " + persistId);
         }
         if (bufferIndex > 0) {
-            Arrays.sort(msgBuffer, 0, bufferIndex, (o1, o2) -> (int) (o2.getT() - o1.getT()));
-            if (persistId % PERSIST_SAMPLE_RATE == 0) {
-                logger.info("Sorted memTable to buffer with index: " + bufferIndex
-                        + ", time: " + (System.currentTimeMillis() - persistStart) + ", persistId: " + persistId);
-            }
             int lastT = -1;
             int aCount = 0;
             int index;
             for (index = bufferIndex - 1; index >= 0; index--) {
-                Message msg = msgBuffer[index];
+                Message msg = targetBuffer[index];
                 int t = (int) msg.getT();
                 short a = (short) (msg.getA() - t - A_DIFF_BASE_OFFSET);
 
@@ -189,15 +197,10 @@ public class MiMessageStoreImpl extends MessageStore {
                 msgCounter++;
 
                 // persist body
-//                if (!bodyByteBufferForWrite.hasRemaining()) {
-//                    flushBuffer(bodyFileChannel, bodyByteBufferForWrite);
-//                }
-//                bodyByteBufferForWrite.put(msg.getBody());
-                try {
-                    bodyFile.write(msg.getBody());
-                } catch (IOException e) {
-                    e.printStackTrace();
+                if (!bodyByteBufferForWrite.hasRemaining()) {
+                    flushBuffer(bodyFileChannel, bodyByteBufferForWrite);
                 }
+                bodyByteBufferForWrite.put(msg.getBody());
             }
             bufferIndex = index + 1;
 
@@ -253,12 +256,13 @@ public class MiMessageStoreImpl extends MessageStore {
                 }
             }
             persistMemTable(memTable, Integer.MAX_VALUE);
-//            flushBuffer(bodyFileChannel, bodyByteBufferForWrite);
+            flushBuffer(bodyFileChannel, bodyByteBufferForWrite);
             persistDone = true;
             persistThreadPool.shutdown();
             logger.info("Flushed all memTables, time: " + (System.currentTimeMillis() - getStart));
 
-            msgBuffer = null;
+            msgBuffer1 = null;
+            msgBuffer2 = null;
             System.gc();
             logger.info("Try active GC, time: " + (System.currentTimeMillis() - getStart));
         }

@@ -175,12 +175,14 @@ public class MiMessageStoreImpl extends MessageStore {
                         id = tIndexDictId++;
                         tIndexDictCount2Id[aCount] = id;
                         tIndexDictId2Count[id] = aCount;
-//                        logger.info("Set t index dict: " + aCount + " -> " + id);
+                        logger.info("Set t index dict: " + aCount + " -> " + id);
                     }
                     tIndex[lastT] = id;
 
                     // sort and store a (diff)
-                    Arrays.sort(aBuffer, 0, aCount);
+                    if (aCount > 1) {
+                        Arrays.sort(aBuffer, 0, aCount);
+                    }
                     for (int k = 0; k < aCount; k++) {
                         if (msgCounter < A_DIFF_HALF_SIZE) {
                             aFirstHalf[msgCounter] = aBuffer[k];
@@ -197,12 +199,12 @@ public class MiMessageStoreImpl extends MessageStore {
                     aCount = 0;
                 }
 
-                lastT = t;
-                aBuffer[aCount++] = a;
-
                 if (t >= currentMinT) {
                     break;
                 }
+
+                lastT = t;
+                aBuffer[aCount++] = a;
 
                 // persist body
                 if (!bodyByteBufferForWrite.hasRemaining()) {
@@ -376,9 +378,9 @@ public class MiMessageStoreImpl extends MessageStore {
             getMsgCounter.addAndGet(result.size());
         }
         if (getId % GET_SAMPLE_RATE == 0) {
-//            for (int i = 0; i < Math.min(100, result.size()); i++) {
-//                logger.info(" result : t - " + result.get(i).getT() + ", a - " + result.get(i).getA());
-//            }
+            for (int i = 0; i < Math.min(100, result.size()); i++) {
+                logger.info(" result : t - " + result.get(i).getT() + ", a - " + result.get(i).getA());
+            }
             logger.info("Return sorted result with size: " + result.size()
                     + ", time: " + (System.currentTimeMillis() - getStart) + ", getId: " + getId);
         }

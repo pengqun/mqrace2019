@@ -38,7 +38,7 @@ public class MiMessageStoreImpl extends MessageStore {
     private static final int WRITE_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 1024;
     private static final int READ_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 1024;
 
-    private static final int PERSIST_SAMPLE_RATE = 1;
+    private static final int PERSIST_SAMPLE_RATE = 100;
     private static final int PUT_SAMPLE_RATE = 10000000;
     private static final int GET_SAMPLE_RATE = 1000;
     private static final int AVG_SAMPLE_RATE = 1000;
@@ -282,50 +282,49 @@ public class MiMessageStoreImpl extends MessageStore {
         for (int t = (int) (tMin / T_INDEX_SUMMARY_RATE * T_INDEX_SUMMARY_RATE); t < tMin; t++) {
             aIndex += tIndexDictId2Count[tIndex[t]];
         }
-        long offsetForBody = (long) aIndex * BODY_BYTE_LENGTH;
 
         ByteBuffer bodyByteBufferForRead = threadBufferForReadBody.get();
         bodyByteBufferForRead.flip();
 
         for (int t = (int) tMin; t <= tMax; t++) {
             int aCount = tIndexDictId2Count[tIndex[t]];
-            while (aCount-- > 0) {
-                if (!bodyByteBufferForRead.hasRemaining()) {
-                    try {
-                        bodyByteBufferForRead.clear();
-                        bodyFileChannel.read(bodyByteBufferForRead, offsetForBody);
-                        bodyByteBufferForRead.flip();
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                    }
-                    offsetForBody += READ_BODY_BUFFER_SIZE;
+            if (aCount > 2) {
+                long curMax = getA(t, aIndex + aCount - 1);
+                if (curMax < aMin) {
+                    aIndex += aCount;
+                    bodyByteBufferForRead.position(bodyByteBufferForRead.position()
+                            + Math.min(bodyByteBufferForRead.remaining(), aCount * BODY_BYTE_LENGTH));
+                    continue;
                 }
-
-                long aDiff;
-                if (aIndex < A_DIFF_HALF_SIZE) {
-                    aDiff = aFirstHalf[aIndex];
-                } else {
-                    aDiff = aLastHalf.getShort((aIndex - A_DIFF_HALF_SIZE) * KEY_A_BYTE_LENGTH);
-                }
-                aIndex++;
-
-                long a = aDiff + t + A_DIFF_BASE_OFFSET;
+            }
+            while (aCount > 0) {
+                long a = getA(t, aIndex);
                 if (a > aMax) {
-                    int remaining = bodyByteBufferForRead.remaining();
-                    int canSkip = (aCount + 1) * BODY_BYTE_LENGTH;
-                    bodyByteBufferForRead.position(bodyByteBufferForRead.position() + Math.min(remaining, canSkip));
-                    if (canSkip > remaining) {
-                        offsetForBody += canSkip - remaining;
-                    }
+                    aIndex += aCount;
+                    bodyByteBufferForRead.position(bodyByteBufferForRead.position()
+                            + Math.min(bodyByteBufferForRead.remaining(), aCount * BODY_BYTE_LENGTH));
                     break;
-                } else if (a < aMin) {
+                }
+                if (a < aMin) {
                     bodyByteBufferForRead.position(bodyByteBufferForRead.position() + BODY_BYTE_LENGTH);
                 } else {
+                    if (!bodyByteBufferForRead.hasRemaining()) {
+                        try {
+                            bodyByteBufferForRead.clear();
+                            bodyFileChannel.read(bodyByteBufferForRead, (long) aIndex * BODY_BYTE_LENGTH);
+                            bodyByteBufferForRead.flip();
+                        } catch (IOException e) {
+                            e.printStackTrace();
+                        }
+                    }
                     byte[] body = new byte[BODY_BYTE_LENGTH];
                     bodyByteBufferForRead.get(body);
                     Message msg = new Message(a, t, body);
                     result.add(msg);
                 }
+
+                aIndex++;
+                aCount--;
             }
         }
 
@@ -395,7 +394,7 @@ public class MiMessageStoreImpl extends MessageStore {
                     aIndex += aCount;
                     break;
                 }
-                if (a >= aMin && a <= aMax) {
+                if (a >= aMin) {
                     sum += a;
                     count++;
                 }

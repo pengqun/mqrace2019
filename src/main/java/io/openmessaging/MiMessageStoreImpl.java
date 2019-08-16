@@ -1,6 +1,5 @@
 package io.openmessaging;
 
-
 import org.apache.log4j.Logger;
 
 import java.io.FileNotFoundException;
@@ -391,6 +390,12 @@ public class MiMessageStoreImpl extends MessageStore {
 //                throw new RuntimeException(putScore + "/" + getScore + "/" + avgScore);
 //            }
 //        }
+
+        int avgId = avgCounter.getAndIncrement();
+        if (avgId == TEST_BOUNDARY) {
+            throw new RuntimeException(":(");
+        }
+
         long sum = 0;
         int count = 0;
 

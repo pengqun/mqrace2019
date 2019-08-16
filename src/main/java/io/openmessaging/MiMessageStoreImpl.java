@@ -83,7 +83,7 @@ public class MiMessageStoreImpl extends MessageStore {
     private byte[] tIndexDictCount2Id = new byte[MAX_T_INDEX_SIZE];
     private int[] tIndexDictId2Count = new int[128];
     private byte tIndexDictId = 1;
-    private short[] aBuffer = new short[MAX_T_INDEX_SIZE];
+    private Message[] abBuffer = new Message[MAX_T_INDEX_SIZE];
 
     private Message sentinelMessage = new Message(Integer.MAX_VALUE, Integer.MAX_VALUE, null);
 
@@ -166,7 +166,6 @@ public class MiMessageStoreImpl extends MessageStore {
             while (true) {
                 Message msg = index >= 0 ? targetBuffer[index] : sentinelMessage;
                 int t = (int) msg.getT();
-                short a = (short) (msg.getA() - t - A_DIFF_BASE_OFFSET);
 
                 if (t != lastT) {
                     // update t index
@@ -181,13 +180,13 @@ public class MiMessageStoreImpl extends MessageStore {
 
                     // sort and store a (diff)
                     if (aCount > 1) {
-                        Arrays.sort(aBuffer, 0, aCount);
+                        Arrays.sort(abBuffer, 0, aCount, (o1, o2) -> (int) (o1.getA() - o2.getA()));
                     }
                     for (int k = 0; k < aCount; k++) {
                         if (msgCounter < A_DIFF_HALF_SIZE) {
-                            aFirstHalf[msgCounter] = aBuffer[k];
+                            aFirstHalf[msgCounter] = (short) (abBuffer[k].getA() - lastT - A_DIFF_BASE_OFFSET);
                         } else {
-                            aLastHalf.putShort(aBuffer[k]);
+                            aLastHalf.putShort((short) (abBuffer[k].getA() - lastT - A_DIFF_BASE_OFFSET));
                         }
                         msgCounter++;
                     }
@@ -204,7 +203,7 @@ public class MiMessageStoreImpl extends MessageStore {
                 }
 
                 lastT = t;
-                aBuffer[aCount++] = a;
+                abBuffer[aCount++] = msg;
 
                 // persist body
                 if (!bodyByteBufferForWrite.hasRemaining()) {
@@ -259,8 +258,12 @@ public class MiMessageStoreImpl extends MessageStore {
             persistDone = true;
             persistThreadPool.shutdown();
             try {
-                logger.info("Flushed all memTables, msg count: " + putCounter.get()
+                logger.info("Flushed all memTables, msg count1: " + putCounter.get()
+                        + ", msg count2: " + msgCounter
                         + ", file size: " + bodyFileChannel.size()
+                        + ", msg count3: " + bodyFileChannel.size() / BODY_BYTE_LENGTH
+                        + ", buffer index: " + bufferIndex
+                        + ", tIndexDictId: " + tIndexDictId
                         + ", time: " + (System.currentTimeMillis() - getStart));
             } catch (IOException e) {
                 e.printStackTrace();

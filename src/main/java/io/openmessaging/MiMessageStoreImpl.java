@@ -379,7 +379,10 @@ public class MiMessageStoreImpl extends MessageStore {
         }
         if (getId % GET_SAMPLE_RATE == 0) {
             for (int i = 0; i < Math.min(100, result.size()); i++) {
-                logger.info(" result : t - " + result.get(i).getT() + ", a - " + result.get(i).getA());
+                logger.info(" result " + i  + ": t - " + result.get(i).getT() + ", a - " + result.get(i).getA());
+            }
+            for (int i = result.size() - 1; i >= Math.max(0, result.size() - 100); i--) {
+                logger.info(" result " + i + ": t - " + result.get(i).getT() + ", a - " + result.get(i).getA());
             }
             logger.info("Return sorted result with size: " + result.size()
                     + ", time: " + (System.currentTimeMillis() - getStart) + ", getId: " + getId);

@@ -40,7 +40,7 @@ public class MiMessageStoreImpl extends MessageStore {
     private static final int PERSIST_SAMPLE_RATE = 100;
     private static final int PUT_SAMPLE_RATE = 10000000;
     private static final int GET_SAMPLE_RATE = 1000;
-    private static final int AVG_SAMPLE_RATE = 1000;
+    private static final int AVG_SAMPLE_RATE = 100;
 
     private static FileChannel bodyFileChannel;
     private static ByteBuffer bodyByteBufferForWrite = ByteBuffer.allocateDirect(WRITE_BODY_BUFFER_SIZE);
@@ -240,14 +240,14 @@ public class MiMessageStoreImpl extends MessageStore {
     public List<Message> getMessage(long aMin, long aMax, long tMin, long tMax) {
         long getStart = System.currentTimeMillis();
         int getId = getCounter.getAndIncrement();
-//        if (IS_TEST_RUN && getId == 0) {
-//            _putEnd = System.currentTimeMillis();
-//            _getStart = _putEnd;
-//        }
-//        if (getId % GET_SAMPLE_RATE == 0) {
-//            logger.info("getMessage - tMin: " + tMin + ", tMax: " + tMax
-//                    + ", aMin: " + aMin + ", aMax: " + aMax + ", getId: " + getId);
-//        }
+        if (IS_TEST_RUN && getId == 0) {
+            _putEnd = System.currentTimeMillis();
+            _getStart = _putEnd;
+        }
+        if (getId % GET_SAMPLE_RATE == 0) {
+            logger.info("getMessage - tMin: " + tMin + ", tMax: " + tMax
+                    + ", aMin: " + aMin + ", aMax: " + aMax + ", getId: " + getId);
+        }
         if (getId == 0) {
             logger.info("Flush all memTables before getMessage");
             while (persistThreadPool.getActiveCount() + persistThreadPool.getQueue().size() > 0) {
@@ -262,22 +262,13 @@ public class MiMessageStoreImpl extends MessageStore {
             flushBuffer(bodyFileChannel, bodyByteBufferForWrite);
             persistDone = true;
             persistThreadPool.shutdown();
-//            try {
-//                logger.info("Flushed all memTables, msg count1: " + putCounter.get()
-//                        + ", msg count2: " + msgCounter
-//                        + ", file size: " + bodyFileChannel.size()
-//                        + ", msg count3: " + bodyFileChannel.size() / BODY_BYTE_LENGTH
-//                        + ", buffer index: " + bufferIndex
-//                        + ", tIndexDictId: " + tIndexDictId
-//                        + ", time: " + (System.currentTimeMillis() - getStart));
-//            } catch (IOException e) {
-//                e.printStackTrace();
-//            }
+            logger.info("Flushed all memTables, msg count: " + msgCounter
+                    + ", time: " + (System.currentTimeMillis() - getStart));
 
             msgBuffer1 = null;
             msgBuffer2 = null;
             System.gc();
-//            logger.info("Try active GC, time: " + (System.currentTimeMillis() - getStart));
+            logger.info("Try active GC, time: " + (System.currentTimeMillis() - getStart));
         }
         while (!persistDone) {
             logger.info("Waiting for all persist tasks to finish");
@@ -346,25 +337,19 @@ public class MiMessageStoreImpl extends MessageStore {
 
         bodyByteBufferForRead.clear();
 
-//        if (IS_TEST_RUN) {
-//            getMsgCounter.addAndGet(result.size());
-//        }
-//        if (getId % GET_SAMPLE_RATE == 0) {
-////            for (int i = 0; i < Math.min(100, result.size()); i++) {
-////                logger.info(" result " + i  + ": t - " + result.get(i).getT() + ", a - " + result.get(i).getA());
-////            }
-////            for (int i = result.size() - 1; i >= Math.max(0, result.size() - 100); i--) {
-////                logger.info(" result " + i + ": t - " + result.get(i).getT() + ", a - " + result.get(i).getA());
-////            }
-//            logger.info("Return sorted result with size: " + result.size()
-//                    + ", time: " + (System.currentTimeMillis() - getStart) + ", getId: " + getId);
-//        }
+        if (IS_TEST_RUN) {
+            getMsgCounter.addAndGet(result.size());
+        }
+        if (getId % GET_SAMPLE_RATE == 0) {
+            logger.info("Return sorted result with size: " + result.size()
+                    + ", time: " + (System.currentTimeMillis() - getStart) + ", getId: " + getId);
+        }
         return result;
     }
 
     @Override
     public long getAvgValue(long aMin, long aMax, long tMin, long tMax) {
-        long avgStart = System.currentTimeMillis();
+        long avgStart = System.nanoTime();
         int avgId = avgCounter.getAndIncrement();
         if (IS_TEST_RUN && avgId == 0) {
             _getEnd = System.currentTimeMillis();
@@ -423,10 +408,10 @@ public class MiMessageStoreImpl extends MessageStore {
             }
         }
 
-//        if (avgId % AVG_SAMPLE_RATE == 0) {
-//            logger.info("Got " + count // + ", skip: " + skip
-//                    + ", time: " + (System.currentTimeMillis() - avgStart));
-//        }
+        if (avgId % AVG_SAMPLE_RATE == 0) {
+            logger.info("Got " + count // + ", skip: " + skip
+                    + ", time: " + (double) (System.nanoTime() - avgStart) / 1000000);
+        }
         if (IS_TEST_RUN) {
             avgMsgCounter.addAndGet((int) count);
         }

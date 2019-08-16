@@ -101,12 +101,17 @@ public class MiMessageStoreImpl extends MessageStore {
             _putStart = putStart;
             _firstStart = putStart;
         }
-        if (IS_TEST_RUN && _firstStart > 0 && (putStart - _firstStart) > 60 * 1000) {
-            throw new RuntimeException(":)" + putId + "!");
-        }
+//        if (IS_TEST_RUN && _firstStart > 0 && (putStart - _firstStart) > 60 * 1000) {
+//            throw new RuntimeException(":)" + putId + "!");
+//        }
         long key = (message.getT() << 32) + putId;
         synchronized (this) {
-            memTable.put(key, message);
+            try {
+                memTable.put(key, message);
+            } catch (RuntimeException e) {
+                logger.info("Failed to put memTable, retry once: " + e.getMessage());
+                memTable.put(key, message);
+            }
         }
         if (putId % PUT_SAMPLE_RATE == 0) {
             logger.info("putMessage to memTable with t: " + message.getT() + ", a: " + message.getA()
@@ -115,7 +120,6 @@ public class MiMessageStoreImpl extends MessageStore {
         currentT[threadId.get()] = (int) message.getT();
 
         if ((putId + 1) % MAX_MEM_TABLE_SIZE == 0) {
-//            logger.info("Submit memTable persist task, putId: " + putId);
             int currentMinT = currentT[0];
             for (int i = 1; i < currentT.length; i++) {
                 currentMinT = Math.min(currentMinT, currentT[i]);
@@ -125,6 +129,7 @@ public class MiMessageStoreImpl extends MessageStore {
             NavigableMap<Long, Message> frozenMemTable = memTable;
             memTable = new TreeMap<>((Collections.reverseOrder()));
 
+//            logger.info("Submit memTable persist task, putId: " + putId);
             persistThreadPool.execute(() -> persistMemTable(frozenMemTable, finalCurrentMinT));
 //            logger.info("Submitted memTable persist task, time: "
 //                    + (System.currentTimeMillis() - putStart) + ", putId: " + putId);
@@ -141,20 +146,6 @@ public class MiMessageStoreImpl extends MessageStore {
 
         Message[] sourceBuffer = persistId % 2 == 0? msgBuffer1 : msgBuffer2;
         Message[] targetBuffer = persistId % 2 == 1? msgBuffer1 : msgBuffer2;
-
-        // avoid ConcurrentModificationException
-        int curSize = frozenMemTable.size();
-        while (true) {
-            try {
-                Thread.sleep(10);
-            } catch (InterruptedException e) {
-                e.printStackTrace();
-            }
-            if (frozenMemTable.size() == curSize) {
-                break;
-            }
-            curSize = frozenMemTable.size();
-        }
 
         int i = 0;
         int j = 0;

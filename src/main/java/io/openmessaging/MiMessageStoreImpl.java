@@ -101,9 +101,9 @@ public class MiMessageStoreImpl extends MessageStore {
             _putStart = putStart;
             _firstStart = putStart;
         }
-//        if (IS_TEST_RUN && _firstStart > 0 && (putStart - _firstStart) > 60 * 1000) {
-//            throw new RuntimeException(":)" + putId + "!");
-//        }
+        if (IS_TEST_RUN && _firstStart > 0 && (putStart - _firstStart) > 60 * 1000) {
+            throw new RuntimeException(":)" + putId + "!");
+        }
         long key = (message.getT() << 32) + putId;
         synchronized (this) {
             memTable.put(key, message);
@@ -141,6 +141,20 @@ public class MiMessageStoreImpl extends MessageStore {
 
         Message[] sourceBuffer = persistId % 2 == 0? msgBuffer1 : msgBuffer2;
         Message[] targetBuffer = persistId % 2 == 1? msgBuffer1 : msgBuffer2;
+
+        // avoid ConcurrentModificationException
+        int curSize = frozenMemTable.size();
+        while (true) {
+            try {
+                Thread.sleep(10);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+            if (frozenMemTable.size() == curSize) {
+                break;
+            }
+            curSize = frozenMemTable.size();
+        }
 
         int i = 0;
         int j = 0;
@@ -339,43 +353,6 @@ public class MiMessageStoreImpl extends MessageStore {
                 aCount--;
             }
         }
-
-//        long offsetForBody = (long) aIndex * BODY_BYTE_LENGTH;
-////        logger.info("offsetForBody: " + offsetForBody);
-//
-//        for (int t = (int) tMin; t <= tMax; t++) {
-//            int aCount = tIndexDictId2Count[tIndex[t]];
-//            while (aCount-- > 0) {
-//                if (!bodyByteBufferForRead.hasRemaining()) {
-//                    try {
-//                        bodyByteBufferForRead.clear();
-//                        bodyFileChannel.read(bodyByteBufferForRead, offsetForBody);
-//                        bodyByteBufferForRead.flip();
-//                    } catch (IOException e) {
-//                        e.printStackTrace();
-//                    }
-//                    offsetForBody += READ_BODY_BUFFER_SIZE;
-//                }
-//
-//                long aDiff;
-//                if (aIndex < A_DIFF_HALF_SIZE) {
-//                    aDiff = aFirstHalf[aIndex];
-//                } else {
-//                    aDiff = aLastHalf.getShort((aIndex - A_DIFF_HALF_SIZE) * KEY_A_BYTE_LENGTH);
-//                }
-//                aIndex++;
-//
-//                long a = aDiff + t + A_DIFF_BASE_OFFSET;
-//                if (a >= aMin && a <= aMax) {
-//                    byte[] body = new byte[BODY_BYTE_LENGTH];
-//                    bodyByteBufferForRead.get(body);
-//                    Message msg = new Message(a, t, body);
-//                    result.add(msg);
-//                } else {
-//                    bodyByteBufferForRead.position(bodyByteBufferForRead.position() + BODY_BYTE_LENGTH);
-//                }
-//            }
-//        }
 
         bodyByteBufferForRead.clear();
 

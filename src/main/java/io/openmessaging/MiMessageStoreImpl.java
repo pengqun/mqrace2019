@@ -297,84 +297,84 @@ public class MiMessageStoreImpl extends MessageStore {
         ByteBuffer bodyByteBufferForRead = threadBufferForReadBody.get();
         bodyByteBufferForRead.flip();
 
-//        for (int t = (int) tMin; t <= tMax; t++) {
-//            int aCount = tIndexDictId2Count[tIndex[t]];
-//            if (aCount > 2) {
-//                long curMax = getA(t, aIndex + aCount - 1);
-//                if (curMax < aMin) {
-//                    aIndex += aCount;
-//                    bodyByteBufferForRead.position(bodyByteBufferForRead.position()
-//                            + Math.min(bodyByteBufferForRead.remaining(), aCount * BODY_BYTE_LENGTH));
-//                    continue;
-//                }
-//            }
-//            while (aCount > 0) {
-//                long a = getA(t, aIndex);
-//                if (a > aMax) {
-//                    aIndex += aCount;
-//                    bodyByteBufferForRead.position(bodyByteBufferForRead.position()
-//                            + Math.min(bodyByteBufferForRead.remaining(), aCount * BODY_BYTE_LENGTH));
-//                    break;
-//                }
-//                if (a < aMin) {
-//                    bodyByteBufferForRead.position(bodyByteBufferForRead.position() + BODY_BYTE_LENGTH);
-//                } else {
-//                    if (!bodyByteBufferForRead.hasRemaining()) {
-//                        try {
-//                            bodyByteBufferForRead.clear();
-//                            bodyFileChannel.read(bodyByteBufferForRead, (long) aIndex * BODY_BYTE_LENGTH);
-//                            bodyByteBufferForRead.flip();
-//                        } catch (IOException e) {
-//                            e.printStackTrace();
-//                        }
-//                    }
-//                    byte[] body = new byte[BODY_BYTE_LENGTH];
-//                    bodyByteBufferForRead.get(body);
-//                    Message msg = new Message(a, t, body);
-//                    result.add(msg);
-//                }
-//
-//                aIndex++;
-//                aCount--;
-//            }
-//        }
-
-        long offsetForBody = (long) aIndex * BODY_BYTE_LENGTH;
-//        logger.info("offsetForBody: " + offsetForBody);
-
         for (int t = (int) tMin; t <= tMax; t++) {
             int aCount = tIndexDictId2Count[tIndex[t]];
-            while (aCount-- > 0) {
-                if (!bodyByteBufferForRead.hasRemaining()) {
-                    try {
-                        bodyByteBufferForRead.clear();
-                        bodyFileChannel.read(bodyByteBufferForRead, offsetForBody);
-                        bodyByteBufferForRead.flip();
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                    }
-                    offsetForBody += READ_BODY_BUFFER_SIZE;
+            if (aCount > 2) {
+                long curMax = getA(t, aIndex + aCount - 1);
+                if (curMax < aMin) {
+                    aIndex += aCount;
+                    bodyByteBufferForRead.position(bodyByteBufferForRead.position()
+                            + Math.min(bodyByteBufferForRead.remaining(), aCount * BODY_BYTE_LENGTH));
+                    continue;
                 }
-
-                long aDiff;
-                if (aIndex < A_DIFF_HALF_SIZE) {
-                    aDiff = aFirstHalf[aIndex];
+            }
+            while (aCount > 0) {
+                long a = getA(t, aIndex);
+                if (a > aMax) {
+                    aIndex += aCount;
+                    bodyByteBufferForRead.position(bodyByteBufferForRead.position()
+                            + Math.min(bodyByteBufferForRead.remaining(), aCount * BODY_BYTE_LENGTH));
+                    break;
+                }
+                if (a < aMin) {
+                    bodyByteBufferForRead.position(bodyByteBufferForRead.position() + BODY_BYTE_LENGTH);
                 } else {
-                    aDiff = aLastHalf.getShort((aIndex - A_DIFF_HALF_SIZE) * KEY_A_BYTE_LENGTH);
-                }
-                aIndex++;
-
-                long a = aDiff + t + A_DIFF_BASE_OFFSET;
-                if (a >= aMin && a <= aMax) {
+                    if (!bodyByteBufferForRead.hasRemaining()) {
+                        try {
+                            bodyByteBufferForRead.clear();
+                            bodyFileChannel.read(bodyByteBufferForRead, (long) aIndex * BODY_BYTE_LENGTH);
+                            bodyByteBufferForRead.flip();
+                        } catch (IOException e) {
+                            e.printStackTrace();
+                        }
+                    }
                     byte[] body = new byte[BODY_BYTE_LENGTH];
                     bodyByteBufferForRead.get(body);
                     Message msg = new Message(a, t, body);
                     result.add(msg);
-                } else {
-                    bodyByteBufferForRead.position(bodyByteBufferForRead.position() + BODY_BYTE_LENGTH);
                 }
+
+                aIndex++;
+                aCount--;
             }
         }
+
+//        long offsetForBody = (long) aIndex * BODY_BYTE_LENGTH;
+////        logger.info("offsetForBody: " + offsetForBody);
+//
+//        for (int t = (int) tMin; t <= tMax; t++) {
+//            int aCount = tIndexDictId2Count[tIndex[t]];
+//            while (aCount-- > 0) {
+//                if (!bodyByteBufferForRead.hasRemaining()) {
+//                    try {
+//                        bodyByteBufferForRead.clear();
+//                        bodyFileChannel.read(bodyByteBufferForRead, offsetForBody);
+//                        bodyByteBufferForRead.flip();
+//                    } catch (IOException e) {
+//                        e.printStackTrace();
+//                    }
+//                    offsetForBody += READ_BODY_BUFFER_SIZE;
+//                }
+//
+//                long aDiff;
+//                if (aIndex < A_DIFF_HALF_SIZE) {
+//                    aDiff = aFirstHalf[aIndex];
+//                } else {
+//                    aDiff = aLastHalf.getShort((aIndex - A_DIFF_HALF_SIZE) * KEY_A_BYTE_LENGTH);
+//                }
+//                aIndex++;
+//
+//                long a = aDiff + t + A_DIFF_BASE_OFFSET;
+//                if (a >= aMin && a <= aMax) {
+//                    byte[] body = new byte[BODY_BYTE_LENGTH];
+//                    bodyByteBufferForRead.get(body);
+//                    Message msg = new Message(a, t, body);
+//                    result.add(msg);
+//                } else {
+//                    bodyByteBufferForRead.position(bodyByteBufferForRead.position() + BODY_BYTE_LENGTH);
+//                }
+//            }
+//        }
 
         bodyByteBufferForRead.clear();
 
@@ -382,12 +382,12 @@ public class MiMessageStoreImpl extends MessageStore {
             getMsgCounter.addAndGet(result.size());
         }
         if (getId % GET_SAMPLE_RATE == 0) {
-            for (int i = 0; i < Math.min(100, result.size()); i++) {
-                logger.info(" result " + i  + ": t - " + result.get(i).getT() + ", a - " + result.get(i).getA());
-            }
-            for (int i = result.size() - 1; i >= Math.max(0, result.size() - 100); i--) {
-                logger.info(" result " + i + ": t - " + result.get(i).getT() + ", a - " + result.get(i).getA());
-            }
+//            for (int i = 0; i < Math.min(100, result.size()); i++) {
+//                logger.info(" result " + i  + ": t - " + result.get(i).getT() + ", a - " + result.get(i).getA());
+//            }
+//            for (int i = result.size() - 1; i >= Math.max(0, result.size() - 100); i--) {
+//                logger.info(" result " + i + ": t - " + result.get(i).getT() + ", a - " + result.get(i).getA());
+//            }
             logger.info("Return sorted result with size: " + result.size()
                     + ", time: " + (System.currentTimeMillis() - getStart) + ", getId: " + getId);
         }
@@ -396,32 +396,32 @@ public class MiMessageStoreImpl extends MessageStore {
 
     @Override
     public long getAvgValue(long aMin, long aMax, long tMin, long tMax) {
-//        long avgStart = System.currentTimeMillis();
-//        int avgId = avgCounter.getAndIncrement();
-//        if (IS_TEST_RUN && avgId == 0) {
-//            _getEnd = System.currentTimeMillis();
-//            _avgStart = _getEnd;
-//        }
-//        if (avgId % AVG_SAMPLE_RATE == 0) {
-//            logger.info("getAvgValue - tMin: " + tMin + ", tMax: " + tMax
-//                    + ", aMin: " + aMin + ", aMax: " + aMax + ", avgId: " + avgId);
-//            if (IS_TEST_RUN && avgId == TEST_BOUNDARY) {
-//                long putDuration = _putEnd - _putStart;
-//                long getDuration = _getEnd - _getStart;
-//                long avgDuration = System.currentTimeMillis() - _avgStart;
-//                int putScore = (int) (putCounter.get() / putDuration);
-//                int getScore = (int) (getMsgCounter.get() / getDuration);
-//                int avgScore = (int) (avgMsgCounter.get() / avgDuration);
-//                int totalScore = putScore + getScore + avgScore;
-//                logger.info("Test result: \n"
-//                        + "\tput: " + putCounter.get() + " / " + putDuration + "ms = " + putScore + "\n"
-//                        + "\tget: " + getMsgCounter.get() + " / " + getDuration + "ms = " + getScore + "\n"
-//                        + "\tavg: " + avgMsgCounter.get() + " / " + avgDuration + "ms = " + avgScore + "\n"
-//                        + "\ttotal: " + totalScore + "\n"
-//                );
-//                throw new RuntimeException(putScore + "/" + getScore + "/" + avgScore);
-//            }
-//        }
+        long avgStart = System.currentTimeMillis();
+        int avgId = avgCounter.getAndIncrement();
+        if (IS_TEST_RUN && avgId == 0) {
+            _getEnd = System.currentTimeMillis();
+            _avgStart = _getEnd;
+        }
+        if (avgId % AVG_SAMPLE_RATE == 0) {
+            logger.info("getAvgValue - tMin: " + tMin + ", tMax: " + tMax
+                    + ", aMin: " + aMin + ", aMax: " + aMax + ", avgId: " + avgId);
+            if (IS_TEST_RUN && avgId == TEST_BOUNDARY) {
+                long putDuration = _putEnd - _putStart;
+                long getDuration = _getEnd - _getStart;
+                long avgDuration = System.currentTimeMillis() - _avgStart;
+                int putScore = (int) (putCounter.get() / putDuration);
+                int getScore = (int) (getMsgCounter.get() / getDuration);
+                int avgScore = (int) (avgMsgCounter.get() / avgDuration);
+                int totalScore = putScore + getScore + avgScore;
+                logger.info("Test result: \n"
+                        + "\tput: " + putCounter.get() + " / " + putDuration + "ms = " + putScore + "\n"
+                        + "\tget: " + getMsgCounter.get() + " / " + getDuration + "ms = " + getScore + "\n"
+                        + "\tavg: " + avgMsgCounter.get() + " / " + avgDuration + "ms = " + avgScore + "\n"
+                        + "\ttotal: " + totalScore + "\n"
+                );
+                throw new RuntimeException(putScore + "/" + getScore + "/" + avgScore);
+            }
+        }
         long sum = 0;
         int count = 0;
 
@@ -454,13 +454,13 @@ public class MiMessageStoreImpl extends MessageStore {
             }
         }
 
-//        if (avgId % AVG_SAMPLE_RATE == 0) {
-//            logger.info("Got " + count // + ", skip: " + skip
-//                    + ", time: " + (System.currentTimeMillis() - avgStart));
-//        }
-//        if (IS_TEST_RUN) {
-//            avgMsgCounter.addAndGet((int) count);
-//        }
+        if (avgId % AVG_SAMPLE_RATE == 0) {
+            logger.info("Got " + count // + ", skip: " + skip
+                    + ", time: " + (System.currentTimeMillis() - avgStart));
+        }
+        if (IS_TEST_RUN) {
+            avgMsgCounter.addAndGet((int) count);
+        }
         return count == 0 ? 0 : sum / count;
     }
 

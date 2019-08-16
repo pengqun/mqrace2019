@@ -174,14 +174,16 @@ public class MiMessageStoreImpl extends MessageStore {
                         id = tIndexDictId++;
                         tIndexDictCount2Id[aCount] = id;
                         tIndexDictId2Count[id] = aCount;
-                        logger.info("Set t index dict: " + aCount + " -> " + id);
+//                        logger.info("Set t index dict: " + aCount + " -> " + id);
                     }
                     tIndex[lastT] = id;
 
-                    // sort and store a (diff)
+                    // sort by a
                     if (aCount > 1) {
                         Arrays.sort(abBuffer, 0, aCount, (o1, o2) -> (int) (o1.getA() - o2.getA()));
                     }
+
+                    // store a and body
                     for (int k = 0; k < aCount; k++) {
                         if (msgCounter < A_DIFF_HALF_SIZE) {
                             aFirstHalf[msgCounter] = (short) (abBuffer[k].getA() - lastT - A_DIFF_BASE_OFFSET);
@@ -189,6 +191,11 @@ public class MiMessageStoreImpl extends MessageStore {
                             aLastHalf.putShort((short) (abBuffer[k].getA() - lastT - A_DIFF_BASE_OFFSET));
                         }
                         msgCounter++;
+
+                        if (!bodyByteBufferForWrite.hasRemaining()) {
+                            flushBuffer(bodyFileChannel, bodyByteBufferForWrite);
+                        }
+                        bodyByteBufferForWrite.put(abBuffer[k].getBody());
                     }
 
                     // update t index summary
@@ -204,12 +211,6 @@ public class MiMessageStoreImpl extends MessageStore {
 
                 lastT = t;
                 abBuffer[aCount++] = msg;
-
-                // persist body
-                if (!bodyByteBufferForWrite.hasRemaining()) {
-                    flushBuffer(bodyFileChannel, bodyByteBufferForWrite);
-                }
-                bodyByteBufferForWrite.put(msg.getBody());
                 index--;
             }
             bufferIndex = index + 1;

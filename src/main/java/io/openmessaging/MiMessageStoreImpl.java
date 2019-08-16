@@ -317,7 +317,8 @@ public class MiMessageStoreImpl extends MessageStore {
                     break;
                 }
                 if (a < aMin) {
-                    bodyByteBufferForRead.position(bodyByteBufferForRead.position() + BODY_BYTE_LENGTH);
+                    bodyByteBufferForRead.position(bodyByteBufferForRead.position()
+                            + Math.min(bodyByteBufferForRead.remaining(), BODY_BYTE_LENGTH));
                 } else {
                     if (!bodyByteBufferForRead.hasRemaining()) {
                         try {

@@ -24,10 +24,10 @@ public class MiMessageStoreImpl extends MessageStore {
 
     private static final Logger logger = Logger.getLogger(MiMessageStoreImpl.class);
 
-    private static final int MAX_MEM_TABLE_SIZE = 10 * 10000;
+    private static final int MAX_MEM_TABLE_SIZE = 5 * 10000;
 
     private static final int T_INDEX_SIZE = 1000 * 1024 * 1024;
-    private static final int T_INDEX_SUMMARY_RATE = 32;
+    private static final int T_INDEX_SUMMARY_RATE = 100;
     private static final int T_WRITE_ARRAY_SIZE = 400 * 10000;
 
     private static final int A_DIFF_BASE_OFFSET = 10000;
@@ -357,7 +357,10 @@ public class MiMessageStoreImpl extends MessageStore {
         }
         if (avgId % AVG_SAMPLE_RATE == 0) {
             logger.info("getAvgValue - tMin: " + tMin + ", tMax: " + tMax
-                    + ", aMin: " + aMin + ", aMax: " + aMax + ", avgId: " + avgId);
+                    + ", aMin: " + aMin + ", aMax: " + aMax
+                    + ", tDiff: " + (tMax - tMin)
+                    + ", aDiff: " + (aMax - aMin)
+                    + ", avgId: " + avgId);
             if (IS_TEST_RUN && avgId == TEST_BOUNDARY) {
                 long putDuration = _putEnd - _putStart;
                 long getDuration = _getEnd - _getStart;
@@ -378,10 +381,16 @@ public class MiMessageStoreImpl extends MessageStore {
 
         long sum = 0;
         int count = 0;
+        int skip = 0;
 
         int aIndex = tSummary[(int) (tMin / T_INDEX_SUMMARY_RATE)];
         for (int t = (int) (tMin / T_INDEX_SUMMARY_RATE * T_INDEX_SUMMARY_RATE); t < tMin; t++) {
             aIndex += tIndexDictId2Count[tIndex[t]];
+        }
+
+        if (avgId % AVG_SAMPLE_RATE == 0) {
+            logger.info("Found index " + aIndex
+                    + ", time: " + (double) (System.nanoTime() - avgStart) / 1000000);
         }
 
         for (int t = (int) tMin; t <= tMax; t++) {
@@ -390,6 +399,7 @@ public class MiMessageStoreImpl extends MessageStore {
                 long curMax = getA(t, aIndex + aCount - 1);
                 if (curMax < aMin) {
                     aIndex += aCount;
+                    skip += aCount;
                     continue;
                 }
             }
@@ -397,11 +407,14 @@ public class MiMessageStoreImpl extends MessageStore {
                 long a = getA(t, aIndex);
                 if (a > aMax) {
                     aIndex += aCount;
+                    skip += aCount;
                     break;
                 }
                 if (a >= aMin) {
                     sum += a;
                     count++;
+                } else {
+                    skip++;
                 }
                 aIndex++;
                 aCount--;
@@ -409,11 +422,11 @@ public class MiMessageStoreImpl extends MessageStore {
         }
 
         if (avgId % AVG_SAMPLE_RATE == 0) {
-            logger.info("Got " + count // + ", skip: " + skip
+            logger.info("Got " + count + ", skip: " + skip
                     + ", time: " + (double) (System.nanoTime() - avgStart) / 1000000);
         }
         if (IS_TEST_RUN) {
-            avgMsgCounter.addAndGet((int) count);
+            avgMsgCounter.addAndGet(count);
         }
         return count == 0 ? 0 : sum / count;
     }

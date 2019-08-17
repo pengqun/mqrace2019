@@ -28,7 +28,7 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     private static final Logger logger = Logger.getLogger(LsmMessageStoreImpl.class);
 
-    private static final int MAX_MEM_TABLE_SIZE = 1 * 1024;
+    private static final int MAX_MEM_TABLE_SIZE = 256;
     private static final int PERSIST_BUFFER_SIZE = 1024 * 1024;
 
     private static final int T_INDEX_SIZE = 1024 * 1024 * 1024;

@@ -116,7 +116,7 @@ public class LsmMessageStoreImpl extends MessageStore {
                     + ", time: " + (System.nanoTime() - putStart) + ", putId: " + putId);
         }
 
-        if (putId % 13 == 0) {
+        if (putId % 32 == 0) {
             tCurrent[threadId.get()] = message.getT();
         }
 

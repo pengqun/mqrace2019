@@ -116,9 +116,9 @@ public class LsmMessageStoreImpl extends MessageStore {
                     + ", time: " + (System.nanoTime() - putStart) + ", putId: " + putId);
         }
 
-        if (putId % 16 == 0) {
+//        if (putId % 16 == 0) {
             tCurrent[threadId.get()] = message.getT();
-        }
+//        }
 
         if ((putId + 1) % MAX_MEM_TABLE_SIZE == 0) {
 //            logger.info("Submit memTable persist task, putId: " + putId);

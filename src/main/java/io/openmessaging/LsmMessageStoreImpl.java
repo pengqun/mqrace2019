@@ -98,7 +98,7 @@ public class LsmMessageStoreImpl extends MessageStore {
         int putId = putCounter.getAndIncrement();
         if (IS_TEST_RUN && putId == 0) {
             _putStart = System.currentTimeMillis();
-            _firstStart = putStart;
+            _firstStart = _putStart;
         }
         if (IS_TEST_RUN && putId == 10000 * 10000) {
             throw new RuntimeException("" + (System.currentTimeMillis() - _putStart));

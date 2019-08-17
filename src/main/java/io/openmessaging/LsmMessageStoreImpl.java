@@ -160,6 +160,12 @@ public class LsmMessageStoreImpl extends MessageStore {
         Message[] sourceBuffer = persistId % 2 == 0? persistBuffer1 : persistBuffer2;
         Message[] targetBuffer = persistId % 2 == 1? persistBuffer1 : persistBuffer2;
 
+        try {
+            Thread.sleep(1);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+
         int i = 0;
         int j = 0;
         for (Message message : frozenMemTable) {

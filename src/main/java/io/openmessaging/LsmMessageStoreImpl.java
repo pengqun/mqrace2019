@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.TreeSet;
+import java.util.concurrent.ConcurrentSkipListSet;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -99,7 +100,7 @@ public class LsmMessageStoreImpl extends MessageStore {
             _putStart = System.currentTimeMillis();
             _firstStart = putStart;
         }
-        if (IS_TEST_RUN && _firstStart > 0 && (putStart - _firstStart) > 60 * 1000) {
+        if (IS_TEST_RUN && _firstStart > 0 && (putStart / 1000000 - _firstStart) > 60 * 1000) {
             throw new RuntimeException("" + putId);
         }
         if (putId % PUT_SAMPLE_RATE == 0) {
@@ -147,6 +148,7 @@ public class LsmMessageStoreImpl extends MessageStore {
     }
 
     private Collection<Message> createMemTable() {
+//        return new ConcurrentSkipListSet<>((m1, m2) -> {
         return new TreeSet<>((m1, m2) -> {
             if (m1.getT() == m2.getT()) {
                 //noinspection ComparatorMethodParameterNotUsed

@@ -10,6 +10,7 @@ import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.ConcurrentSkipListSet;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -27,8 +28,8 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     private static final Logger logger = Logger.getLogger(LsmMessageStoreImpl.class);
 
-    private static final int MAX_MEM_TABLE_SIZE = 10 * 1024;
-    private static final int PERSIST_BUFFER_SIZE = 1024 * 1024;
+    private static final int MAX_MEM_TABLE_SIZE = 16 * 1024;
+    private static final int PERSIST_BUFFER_SIZE = 3 * 1024 * 1024;
 
     private static final int T_INDEX_SIZE = 1024 * 1024 * 1024;
     private static final int T_INDEX_SUMMARY_FACTOR = 32;
@@ -93,12 +94,12 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     @Override
     public void put(Message message) {
-//        long putStart = System.nanoTime();
+        long putStart = System.nanoTime();
         int putId = putCounter.getAndIncrement();
-//        if (IS_TEST_RUN && putId == 0) {
-//            _putStart = System.currentTimeMillis();
-//            _firstStart = _putStart;
-//        }
+        if (IS_TEST_RUN && putId == 0) {
+            _putStart = System.currentTimeMillis();
+            _firstStart = _putStart;
+        }
 //        if (IS_TEST_RUN && putId == 10000 * 10000) {
 //            throw new RuntimeException("" + (System.currentTimeMillis() - _putStart));
 //        }
@@ -108,10 +109,10 @@ public class LsmMessageStoreImpl extends MessageStore {
 
         memTable.add(message);
 
-//        if (putId % PUT_SAMPLE_RATE == 0) {
-//            logger.info("Put message to memTable with t: " + message.getT() + ", a: " + message.getA()
-//                    + ", time: " + (System.nanoTime() - putStart) + ", putId: " + putId);
-//        }
+        if (putId % PUT_SAMPLE_RATE == 0) {
+            logger.info("Put message to memTable with t: " + message.getT() + ", a: " + message.getA()
+                    + ", time: " + (System.nanoTime() - putStart) + ", putId: " + putId);
+        }
 
         tCurrent[threadId.get()] = message.getT();
 
@@ -219,7 +220,7 @@ public class LsmMessageStoreImpl extends MessageStore {
 
                 // sort by a
                 if (msgCount > 1) {
-                    msgBuffer.sort((m1, m2) -> (int) (m1.getA() - m2.getA()));
+                    msgBuffer.sort(Comparator.comparingLong(Message::getA));
                 }
 
                 // store a and body

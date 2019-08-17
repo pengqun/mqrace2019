@@ -14,7 +14,7 @@ public class TestMessageStoreImpl extends MessageStore {
 
     private static final Logger logger = Logger.getLogger(TestMessageStoreImpl.class);
 
-    private long totalCount = 0;
+    private int totalCount = 0;
 
     private long _aMin = Long.MAX_VALUE;
     private long _aMax = Long.MIN_VALUE;
@@ -28,7 +28,7 @@ public class TestMessageStoreImpl extends MessageStore {
     private long totalNegDiff = 0;
     private long negDiffCount = 0;
 
-//    private int[] msgCounter = new int[1024 * 1024 * 1024];
+    private short[] msgCounter = new short[1024 * 1024 * 1024];
     private int minRepeat = Integer.MAX_VALUE;
     private int maxRepeat = Integer.MIN_VALUE;
 
@@ -40,9 +40,11 @@ public class TestMessageStoreImpl extends MessageStore {
 //    ByteBuffer byteBuffer2 = ByteBuffer.allocateDirect(1024 * 1024 * 1024);
 
 //    private long[] diffCounter = new long[65535];
-    private int[] repeatCounter = new int[5000];
+    private int[] repeatCounter = new int[1024 * 1024];
 
     private AtomicInteger getCounter = new AtomicInteger(0);
+
+    private long base = 0;
 
     @Override
     public synchronized void put(Message message) {
@@ -50,9 +52,26 @@ public class TestMessageStoreImpl extends MessageStore {
         long a = message.getA();
         byte[] body = message.getBody();
 
-        if (totalCount++ < 100000) {
-            logger.info("t - " + t + ", a - " + a + ", body.length - " + body.length);
+        int id = totalCount++;
+//        if (totalCount < 100000) {
+//            logger.info("t - " + t + ", a - " + a + ", body.length - " + body.length);
+//        }
+
+        if (id == 0) {
+            base = t - 10000;
         }
+        while (base == 0) {
+            try {
+                Thread.sleep(10);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        }
+        int tDiff = (int) (t - base);
+        if (tDiff < 0) {
+            throw new RuntimeException("Wrong base with diff: " + tDiff);
+        }
+
         _aMin = Math.min(a, _aMin);
         _aMax = Math.max(a, _aMax);
         _tMin = Math.min(t, _tMin);
@@ -70,9 +89,13 @@ public class TestMessageStoreImpl extends MessageStore {
 //        }
 //        diffCounter[diff]++;
 
-//        msgCounter[t]++;
-//        minRepeat = Math.min(minRepeat, msgCounter[t]);
-//        maxRepeat = Math.max(maxRepeat, msgCounter[t]);
+        msgCounter[tDiff]++;
+        if (msgCounter[tDiff] < 0) {
+            throw new RuntimeException("Repeat larger than short");
+        }
+
+        minRepeat = Math.min(minRepeat, msgCounter[tDiff]);
+        maxRepeat = Math.max(maxRepeat, msgCounter[tDiff]);
 
 //        if (t < accumCounter.length) {
 //            accumCounter[t] += diff;
@@ -91,11 +114,11 @@ public class TestMessageStoreImpl extends MessageStore {
             }
         }
         logger.info("getMessage: aMin - " + aMin + ", aMax - " + aMax + ", tMin - " + tMin + ", tMax - " + tMax);
-//        for (int t = (int) _tMin; t <= _tMax; t++) {
-//            repeatCounter[msgCounter[t]]++;
-//        }
+        for (long t = _tMin; t <= _tMax; t++) {
+            repeatCounter[msgCounter[(int) (t - base)]]++;
+        }
 
-//        int nonZeroCount = 0;
+        int nonZeroCount = 0;
 //        for (int diff = minDiff; diff <= maxDiff; diff++) {
 //            logger.info(" diff: " + diff + " -> " + diffCounter[diff]);
 //            if (diffCounter[diff] > 0) {
@@ -105,13 +128,13 @@ public class TestMessageStoreImpl extends MessageStore {
 //        logger.info(" non-zero diff: " + nonZeroCount);
 
 //        nonZeroCount = 0;
-//        for (int repeat = 0; repeat <= maxRepeat; repeat++) {
-//            logger.info(" repeat: " + repeat + " -> " + repeatCounter[repeat]);
-//            if (repeatCounter[repeat] > 0) {
-//                nonZeroCount++;
-//            }
-//        }
-//        logger.info(" non-zero diff: " + nonZeroCount);
+        for (int repeat = 0; repeat <= maxRepeat; repeat++) {
+            logger.info(" repeat: " + repeat + " -> " + repeatCounter[repeat]);
+            if (repeatCounter[repeat] > 0) {
+                nonZeroCount++;
+            }
+        }
+        logger.info(" non-zero repeat: " + nonZeroCount);
 
         logger.info("getMessage: _aMin - " + _aMin + ", _aMax - " + _aMax
                 + ", _tMin - " + _tMin + ", _tMax - " + _tMax + ", totalCount = " + totalCount
@@ -119,11 +142,11 @@ public class TestMessageStoreImpl extends MessageStore {
 //                + ", posDiffCount - " + posDiffCount + ", negDiffCount - " + negDiffCount
 //                + ", avgPosDiff - " + (posDiffCount > 0 ? totalPosDiff / posDiffCount : 0)
 //                + ", avgNegDiff - " + (negDiffCount > 0 ? totalNegDiff / negDiffCount : 0)
-//                + ", minRepeat - " + minRepeat + ", maxRepeat - " + maxRepeat
+                + ", minRepeat - " + minRepeat + ", maxRepeat - " + maxRepeat
 //                + ", minAccum - " + minAccum + ", maxAccum - " + maxAccum
         );
 
-        ArrayList<Message> res = new ArrayList<Message>();
+        ArrayList<Message> res = new ArrayList<>();
         return res;
     }
 

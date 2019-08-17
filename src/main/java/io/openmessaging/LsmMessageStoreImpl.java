@@ -40,8 +40,8 @@ public class LsmMessageStoreImpl extends MessageStore {
     private static final int WRITE_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 1024;
     private static final int READ_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 1024;
 
-    private static final int PERSIST_SAMPLE_RATE = 1000;
-    private static final int PUT_SAMPLE_RATE = 1000000;
+    private static final int PERSIST_SAMPLE_RATE = 10000;
+    private static final int PUT_SAMPLE_RATE = 10000000;
     private static final int GET_SAMPLE_RATE = 1000;
     private static final int AVG_SAMPLE_RATE = 1000;
 
@@ -94,27 +94,25 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     @Override
     public void put(Message message) {
-        long putStart = System.nanoTime();
+//        long putStart = System.nanoTime();
         int putId = putCounter.getAndIncrement();
-        if (IS_TEST_RUN && putId == 0) {
-            _putStart = System.currentTimeMillis();
-            _firstStart = _putStart;
-        }
+//        if (IS_TEST_RUN && putId == 0) {
+//            _putStart = System.currentTimeMillis();
+//            _firstStart = _putStart;
+//        }
         if (IS_TEST_RUN && putId == 10000 * 10000) {
             throw new RuntimeException("" + (System.currentTimeMillis() - _putStart));
         }
-        if (putId % PUT_SAMPLE_RATE == 0) {
-            logger.info("Before add, time: " + (System.nanoTime() - putStart));
-        }
-
-//        synchronized (this) {
-            memTable.add(message);
+//        if (putId % PUT_SAMPLE_RATE == 0) {
+//            logger.info("Before add, time: " + (System.nanoTime() - putStart));
 //        }
 
-        if (putId % PUT_SAMPLE_RATE == 0) {
-            logger.info("Put message to memTable with t: " + message.getT() + ", a: " + message.getA()
-                    + ", time: " + (System.nanoTime() - putStart) + ", putId: " + putId);
-        }
+        memTable.add(message);
+
+//        if (putId % PUT_SAMPLE_RATE == 0) {
+//            logger.info("Put message to memTable with t: " + message.getT() + ", a: " + message.getA()
+//                    + ", time: " + (System.nanoTime() - putStart) + ", putId: " + putId);
+//        }
 
         tCurrent[threadId.get()] = message.getT();
 
@@ -140,9 +138,9 @@ public class LsmMessageStoreImpl extends MessageStore {
 //            logger.info("Submitted memTable persist task, time: "
 //                    + (System.currentTimeMillis() - putStart) + ", putId: " + putId);
         }
-        if (putId % PUT_SAMPLE_RATE == 0) {
-            logger.info("Done put, time: " + (System.nanoTime() - putStart));
-        }
+//        if (putId % PUT_SAMPLE_RATE == 0) {
+//            logger.info("Done put, time: " + (System.nanoTime() - putStart));
+//        }
     }
 
     private Collection<Message> createMemTable() {

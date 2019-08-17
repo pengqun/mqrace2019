@@ -100,8 +100,8 @@ public class LsmMessageStoreImpl extends MessageStore {
             _putStart = System.currentTimeMillis();
             _firstStart = putStart;
         }
-        if (IS_TEST_RUN && _firstStart > 0 && (putStart / 1000000 - _firstStart) > 60 * 1000) {
-            throw new RuntimeException("" + putId);
+        if (IS_TEST_RUN && putId == 10000 * 10000) {
+            throw new RuntimeException("" + (System.currentTimeMillis() - _putStart));
         }
         if (putId % PUT_SAMPLE_RATE == 0) {
             logger.info("Before add, time: " + (System.nanoTime() - putStart));
@@ -116,9 +116,9 @@ public class LsmMessageStoreImpl extends MessageStore {
                     + ", time: " + (System.nanoTime() - putStart) + ", putId: " + putId);
         }
 
-//        if (putId % 10 == 0) {
-        tCurrent[threadId.get()] = message.getT();
-//        }
+        if (putId % 16 == 0) {
+            tCurrent[threadId.get()] = message.getT();
+        }
 
         if ((putId + 1) % MAX_MEM_TABLE_SIZE == 0) {
 //            logger.info("Submit memTable persist task, putId: " + putId);

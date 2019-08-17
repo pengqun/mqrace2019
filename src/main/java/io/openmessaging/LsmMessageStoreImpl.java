@@ -27,7 +27,7 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     private static final Logger logger = Logger.getLogger(LsmMessageStoreImpl.class);
 
-    private static final int MAX_MEM_TABLE_SIZE = 20 * 10000;
+    private static final int MAX_MEM_TABLE_SIZE = 10 * 10000;
 
     private static final int T_INDEX_SIZE = 1024 * 1024 * 1024;
     private static final int T_INDEX_SUMMARY_FACTOR = 32;
@@ -103,15 +103,8 @@ public class LsmMessageStoreImpl extends MessageStore {
             throw new RuntimeException("" + putId);
         }
 
-        try {
-            synchronized (this) {
-                memTable.add(message);
-            }
-        } catch (RuntimeException e) {
-            logger.info("Failed to add memTable, retry: " + e.getMessage());
-            synchronized (this) {
-                memTable.add(message);
-            }
+        synchronized (this) {
+            memTable.add(message);
         }
 
         if (putId % PUT_SAMPLE_RATE == 0) {
@@ -146,7 +139,7 @@ public class LsmMessageStoreImpl extends MessageStore {
     }
 
     private Collection<Message> createMemTable() {
-        return new TreeSet<Message>((m1, m2) -> {
+        return new TreeSet<>((m1, m2) -> {
             if (m1.getT() == m2.getT()) {
                 //noinspection ComparatorMethodParameterNotUsed
                 return -1;

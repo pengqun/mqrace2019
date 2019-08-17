@@ -8,7 +8,10 @@ import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+import java.util.TreeSet;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -20,23 +23,20 @@ import static io.openmessaging.Constants.*;
 /**
  * @author .ignore 2019-07-29
  */
-@SuppressWarnings("DuplicatedCode")
 public class LsmMessageStoreImpl extends MessageStore {
 
     private static final Logger logger = Logger.getLogger(LsmMessageStoreImpl.class);
 
     private static final int MAX_MEM_TABLE_SIZE = 20 * 10000;
 
-    private static final int DIFF_A_BASE_OFFSET = 10000;
-
     private static final int T_INDEX_SIZE = 1024 * 1024 * 1024;
-    private static final int T_INDEX_SUMMARY_RATE = 32;
-    private static final int T_WRITE_ARRAY_SIZE = 300 * 10000;
+    private static final int T_INDEX_SUMMARY_FACTOR = 32;
+    private static final int PERSIST_BUFFER_SIZE = 300 * 10000;
 
     private static final int WRITE_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 1024;
     private static final int READ_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 1024;
 
-    private static final int WRITE_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 2048;
+    private static final int WRITE_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 1024;
     private static final int READ_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 1024;
 
     private static final int PERSIST_SAMPLE_RATE = 100;
@@ -61,25 +61,27 @@ public class LsmMessageStoreImpl extends MessageStore {
         }
     }
 
-    private volatile NavigableMap<Long, Message> memTable = new TreeMap<>();
-
-    private ThreadPoolExecutor persistThreadPool = new ThreadPoolExecutor(1, 1,
-            0L, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>());
+    private ThreadPoolExecutor persistThreadPool = new ThreadPoolExecutor(
+            1, 1, 0L, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>());
 
     private AtomicInteger putCounter = new AtomicInteger(0);
     private AtomicInteger persistCounter = new AtomicInteger(0);
     private AtomicInteger getCounter = new AtomicInteger(0);
     private AtomicInteger avgCounter = new AtomicInteger(0);
 
+    private volatile Collection<Message> memTable = createMemTable();
+    private Message[] persistBuffer1 = new Message[PERSIST_BUFFER_SIZE];
+    private Message[] persistBuffer2 = new Message[PERSIST_BUFFER_SIZE];
+    private int persistBufferIndex = 0;
     private volatile boolean persistDone = false;
 
-    private Message[] msgBuffer = new Message[T_WRITE_ARRAY_SIZE];
-    private int bufferIndex = 0;
-
     private short[] tIndex = new short[T_INDEX_SIZE];
-    private int[] tSummary = new int[T_INDEX_SIZE / T_INDEX_SUMMARY_RATE];
-    private AtomicInteger msgCounter = new AtomicInteger(0);
-    private int[] currentT = new int[PRODUCE_THREAD_NUM];
+    private int[] tIndexSummary = new int[T_INDEX_SIZE / T_INDEX_SUMMARY_FACTOR];
+    private long[] tCurrent = new long[PRODUCER_THREAD_NUM];
+    private int tIndexCounter = 0;
+    private long tBase = -1;
+
+    private Message sentinelMessage = new Message(Long.MAX_VALUE, Long.MAX_VALUE, null);
 
     private ThreadLocal<ByteBuffer> threadBufferForReadA = ThreadLocal.withInitial(()
             -> ByteBuffer.allocateDirect(READ_A_BUFFER_SIZE));
@@ -87,8 +89,7 @@ public class LsmMessageStoreImpl extends MessageStore {
             -> ByteBuffer.allocateDirect(READ_BODY_BUFFER_SIZE));
 
     private AtomicInteger threadIdCounter = new AtomicInteger(0);
-    private ThreadLocal<Integer> threadId = ThreadLocal.withInitial(()
-            -> threadIdCounter.getAndIncrement());
+    private ThreadLocal<Integer> threadId = ThreadLocal.withInitial(() -> threadIdCounter.getAndIncrement());
 
     @Override
     public void put(Message message) {
@@ -98,31 +99,38 @@ public class LsmMessageStoreImpl extends MessageStore {
             _putStart = putStart;
             _firstStart = putStart;
         }
-//        if (IS_TEST_RUN && _firstStart > 0 && (putStart - _firstStart) > 60 * 1000) {
-//            logger.info("" + putStart + ", " + _firstStart);
-//            throw new RuntimeException("" + putId);
-//        }
-        long key = (message.getT() << 32) + putId;
-        synchronized (this) {
-            memTable.put(key, message);
+        if (IS_TEST_RUN && _firstStart > 0 && (putStart - _firstStart) > 60 * 1000) {
+            throw new RuntimeException("" + putId);
         }
+
+        try {
+            synchronized (this) {
+                memTable.add(message);
+            }
+        } catch (RuntimeException e) {
+            logger.info("Failed to add memTable, retry: " + e.getMessage());
+            synchronized (this) {
+                memTable.add(message);
+            }
+        }
+
         if (putId % PUT_SAMPLE_RATE == 0) {
-            logger.info("putMessage to memTable with t: " + message.getT() + ", a: " + message.getA()
+            logger.info("Put message to memTable with t: " + message.getT() + ", a: " + message.getA()
                     + ", time: " + (System.currentTimeMillis() - putStart) + ", putId: " + putId);
         }
 
-        currentT[threadId.get()] = (int) message.getT();
+        tCurrent[threadId.get()] = message.getT();
 
         if ((putId + 1) % MAX_MEM_TABLE_SIZE == 0) {
 //            logger.info("Submit memTable persist task, putId: " + putId);
-            int currentMinT = currentT[0];
-            for (int i = 1; i < currentT.length; i++) {
-                currentMinT = Math.min(currentMinT, currentT[i]);
+            long currentMinT = tCurrent[0];
+            for (int i = 1; i < tCurrent.length; i++) {
+                currentMinT = Math.min(currentMinT, tCurrent[i]);
             }
-            int finalCurrentMinT = currentMinT;
+            long finalCurrentMinT = currentMinT;
 
-            NavigableMap<Long, Message> frozenMemTable = memTable;
-            memTable = new TreeMap<>();
+            Collection<Message> frozenMemTable = memTable;
+            memTable = createMemTable();
 
             persistThreadPool.execute(() -> {
                 try {
@@ -137,58 +145,112 @@ public class LsmMessageStoreImpl extends MessageStore {
         }
     }
 
-    private void persistMemTable(NavigableMap<Long, Message> frozenMemTable, int currentMinT) {
+    private Collection<Message> createMemTable() {
+        return new TreeSet<Message>((m1, m2) -> {
+            if (m1.getT() == m2.getT()) {
+                //noinspection ComparatorMethodParameterNotUsed
+                return -1;
+            }
+            // Order by T desc
+            return (int) (m2.getT() - m1.getT());
+        });
+    }
+
+    private void persistMemTable(Collection<Message> frozenMemTable, long currentMinT) {
         long persistStart = System.currentTimeMillis();
         int persistId = persistCounter.getAndIncrement();
         if (persistId % PERSIST_SAMPLE_RATE == 0) {
             logger.info("Start persisting memTable with size: " + frozenMemTable.size()
-                    + ", buffer index: " + bufferIndex + ", persistId: " + persistId);
+                    + ", buffer index: " + persistBufferIndex + ", persistId: " + persistId);
         }
-        for (Map.Entry<Long, Message> entry : frozenMemTable.entrySet()) {
-            Message msg = entry.getValue();
-            msgBuffer[bufferIndex++] = msg;
+
+        Message[] sourceBuffer = persistId % 2 == 0? persistBuffer1 : persistBuffer2;
+        Message[] targetBuffer = persistId % 2 == 1? persistBuffer1 : persistBuffer2;
+
+        int i = 0;
+        int j = 0;
+        for (Message message : frozenMemTable) {
+            while (i < persistBufferIndex && sourceBuffer[i].getT() >= message.getT()) {
+                targetBuffer[j++] = sourceBuffer[i++];
+            }
+            targetBuffer[j++] = message;
         }
+        while (i < persistBufferIndex) {
+            targetBuffer[j++] = sourceBuffer[i++];
+        }
+        persistBufferIndex = j;
         if (persistId % PERSIST_SAMPLE_RATE == 0) {
-            logger.info("Copied memTable to buffer with index: " + bufferIndex
+            logger.info("Copied memTable with size: " + frozenMemTable.size() + " to buffer with index: " + persistBufferIndex
                     + ", time: " + (System.currentTimeMillis() - persistStart) + ", persistId: " + persistId);
         }
-        if (bufferIndex > 0) {
-            Arrays.sort(msgBuffer, 0, bufferIndex, (o1, o2) -> (int) (o2.getT() - o1.getT()));
-            if (persistId % PERSIST_SAMPLE_RATE == 0) {
-                logger.info("Sorted memTable to buffer with index: " + bufferIndex
-                        + ", time: " + (System.currentTimeMillis() - persistStart) + ", persistId: " + persistId);
-            }
-            int lastT = -1;
-            int index;
-            for (index = bufferIndex - 1; index >= 0; index--) {
-                Message msg = msgBuffer[index];
-                int t = (int) msg.getT();
-                short a = (short) (msg.getA() - msg.getT() - DIFF_A_BASE_OFFSET);
-                if (t > currentMinT) {
-                    break;
-                }
-                if (!aByteBufferForWrite.hasRemaining()) {
-                    flushBuffer(aFileChannel, aByteBufferForWrite);
-                }
-                aByteBufferForWrite.putShort(a);
 
-                if (!bodyByteBufferForWrite.hasRemaining()) {
-                    flushBuffer(bodyFileChannel, bodyByteBufferForWrite);
-                }
-                bodyByteBufferForWrite.put(msg.getBody());
-
-                tIndex[t]++;
-                if (t != lastT && t % T_INDEX_SUMMARY_RATE == 0) {
-                    tSummary[t / T_INDEX_SUMMARY_RATE] = msgCounter.get();
-                }
-                msgCounter.getAndIncrement();
-                lastT = t;
-            }
-            bufferIndex = index + 1;
+        if (tBase == -1) {
+            tBase = targetBuffer[persistBufferIndex - 1].getT();
+            logger.info("Determined T base: " + tBase);
         }
+
+        if (persistBufferIndex == 0) {
+            logger.info("[WARN] persistBufferIndex is 0, skipped");
+            return;
+        }
+
+        int index = persistBufferIndex - 1;
+        long lastT = targetBuffer[index].getT();
+        List<Message> msgBuffer = new ArrayList<>();
+
+        while (true) {
+            Message msg = index >= 0 ? targetBuffer[index] : sentinelMessage;
+            long t = msg.getT();
+
+            if (t != lastT) {
+                int msgCount = msgBuffer.size();
+
+                // update t index
+                if (msgCount < Short.MAX_VALUE) {
+                    tIndex[(int) (lastT - tBase)] = (short) msgCount;
+                } else {
+                    // TODO store overflowed count to additional map
+                    throw new RuntimeException("A count is larger than short max");
+                }
+
+                // sort by a
+                if (msgCount > 1) {
+                    msgBuffer.sort((m1, m2) -> (int) (m1.getA() - m2.getA()));
+                }
+
+                // store a and body
+                for (Message message : msgBuffer) {
+                    if (!aByteBufferForWrite.hasRemaining()) {
+                        flushBuffer(aFileChannel, aByteBufferForWrite);
+                    }
+                    aByteBufferForWrite.putLong(message.getA());
+                    if (!bodyByteBufferForWrite.hasRemaining()) {
+                        flushBuffer(bodyFileChannel, bodyByteBufferForWrite);
+                    }
+                    bodyByteBufferForWrite.put(message.getBody());
+                }
+                tIndexCounter += msgCount;
+                msgBuffer.clear();
+
+                // update t index summary
+                if ((t - tBase) % T_INDEX_SUMMARY_FACTOR == 0) {
+                    tIndexSummary[(int) ((t - tBase) / T_INDEX_SUMMARY_FACTOR)] = tIndexCounter;
+                }
+            }
+
+            if (t >= currentMinT) {
+                break;
+            }
+
+            msgBuffer.add(msg);
+            lastT = t;
+            index--;
+        }
+        persistBufferIndex = index + 1;
+
         if (persistId % PERSIST_SAMPLE_RATE == 0) {
             logger.info("Done persisting memTable with size: " + frozenMemTable.size()
-                    + ", buffer index: " + bufferIndex
+                    + ", buffer index: " + persistBufferIndex
                     + ", time: " + (System.currentTimeMillis() - persistStart) + ", persistId: " + persistId);
         }
     }
@@ -201,6 +263,15 @@ public class LsmMessageStoreImpl extends MessageStore {
             logger.info("[ERROR] Write to channel failed: " + e.getMessage());
         }
         byteBuffer.clear();
+    }
+
+    private long getOffsetByT(long t) {
+        int tDiff = (int) (t - tBase);
+        long offset = tIndexSummary[tDiff / T_INDEX_SUMMARY_FACTOR];
+        for (int i = tDiff / T_INDEX_SUMMARY_FACTOR * T_INDEX_SUMMARY_FACTOR; i < t; i++) {
+            offset += tIndex[i];
+        }
+        return offset;
     }
 
     @Override
@@ -225,16 +296,14 @@ public class LsmMessageStoreImpl extends MessageStore {
                     e.printStackTrace();
                 }
             }
-            persistMemTable(memTable, Integer.MAX_VALUE);
+            persistMemTable(memTable, Long.MAX_VALUE);
             flushBuffer(aFileChannel, aByteBufferForWrite);
             flushBuffer(bodyFileChannel, bodyByteBufferForWrite);
+//            verifyData();
             persistDone = true;
+
             persistThreadPool.shutdown();
             logger.info("Flushed all memTables, time: " + (System.currentTimeMillis() - getStart));
-
-//            msgBuffer = null;
-//            System.gc();
-//            logger.info("Try active GC, time: " + (System.currentTimeMillis() - getStart));
         }
         while (!persistDone) {
             logger.info("Waiting for all persist tasks to finish");
@@ -250,44 +319,37 @@ public class LsmMessageStoreImpl extends MessageStore {
 
         ArrayList<Message> result = new ArrayList<>(1024);
 
-        long offset = tSummary[(int) (tMin / T_INDEX_SUMMARY_RATE)];
-        for (int t = (int) (tMin / T_INDEX_SUMMARY_RATE * T_INDEX_SUMMARY_RATE); t < tMin; t++) {
-            offset += tIndex[t];
-        }
-
-        long offsetA = offset * KEY_A_BYTE_LENGTH;
-        long offsetB = offset * BODY_BYTE_LENGTH;
-
         ByteBuffer aByteBufferForRead = threadBufferForReadA.get();
         ByteBuffer bodyByteBufferForRead = threadBufferForReadBody.get();
         aByteBufferForRead.flip();
         bodyByteBufferForRead.flip();
 
-        for (int t = (int) tMin; t <= tMax; t++) {
-            int aCount = tIndex[t];
-            while (aCount-- > 0) {
+        long offset = getOffsetByT(tMin);
+        int tDiff = (int) (tMin - tBase);
+
+        for (long t = tMin; t <= tMax; t++) {
+            int msgCount = tIndex[tDiff++];
+            while (msgCount-- > 0) {
                 if (!aByteBufferForRead.hasRemaining()) {
                     try {
                         aByteBufferForRead.clear();
-                        aFileChannel.read(aByteBufferForRead, offsetA);
+                        aFileChannel.read(aByteBufferForRead, offset * KEY_A_BYTE_LENGTH);
                         aByteBufferForRead.flip();
                     } catch (IOException e) {
                         e.printStackTrace();
                     }
-                    offsetA += READ_A_BUFFER_SIZE;
                 }
                 if (!bodyByteBufferForRead.hasRemaining()) {
                     try {
                         bodyByteBufferForRead.clear();
-                        bodyFileChannel.read(bodyByteBufferForRead, offsetB);
+                        bodyFileChannel.read(bodyByteBufferForRead, offset * BODY_BYTE_LENGTH);
                         bodyByteBufferForRead.flip();
                     } catch (IOException e) {
                         e.printStackTrace();
                     }
-                    offsetB += READ_BODY_BUFFER_SIZE;
                 }
 
-                long a = aByteBufferForRead.getShort() + t + DIFF_A_BASE_OFFSET;
+                long a = aByteBufferForRead.getLong();
                 if (a >= aMin && a <= aMax) {
                     byte[] body = new byte[BODY_BYTE_LENGTH];
                     bodyByteBufferForRead.get(body);
@@ -295,8 +357,8 @@ public class LsmMessageStoreImpl extends MessageStore {
                     result.add(msg);
                 } else {
                     bodyByteBufferForRead.position(bodyByteBufferForRead.position() + BODY_BYTE_LENGTH);
-//                  skip++;
                 }
+                offset++;
             }
         }
 
@@ -315,78 +377,114 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     @Override
     public long getAvgValue(long aMin, long aMax, long tMin, long tMax) {
-//        long avgStart = System.currentTimeMillis();
-//        int avgId = avgCounter.getAndIncrement();
-//        if (IS_TEST_RUN && avgId == 0) {
-//            _getEnd = System.currentTimeMillis();
-//            _avgStart = _getEnd;
-//        }
-//        if (avgId % AVG_SAMPLE_RATE == 0) {
-//            logger.info("getAvgValue - tMin: " + tMin + ", tMax: " + tMax
-//                    + ", aMin: " + aMin + ", aMax: " + aMax + ", avgId: " + avgId);
-//            if (IS_TEST_RUN && avgId == TEST_BOUNDARY) {
-//                long putDuration = _putEnd - _putStart;
-//                long getDuration = _getEnd - _getStart;
-//                long avgDuration = System.currentTimeMillis() - _avgStart;
-//                int putScore = (int) (putCounter.get() / putDuration);
-//                int getScore = (int) (getMsgCounter.get() / getDuration);
-//                int avgScore = (int) (avgMsgCounter.get() / avgDuration);
-//                int totalScore = putScore + getScore + avgScore;
-//                logger.info("Test result: \n"
-//                        + "\tput: " + putCounter.get() + " / " + putDuration + "ms = " + putScore + "\n"
-//                        + "\tget: " + getMsgCounter.get() + " / " + getDuration + "ms = " + getScore + "\n"
-//                        + "\tavg: " + avgMsgCounter.get() + " / " + avgDuration + "ms = " + avgScore + "\n"
-//                        + "\ttotal: " + totalScore + "\n"
-//                );
-//                throw new RuntimeException(putScore + "/" + getScore + "/" + avgScore);
-//            }
-//        }
+        long avgStart = System.currentTimeMillis();
+        int avgId = avgCounter.getAndIncrement();
+        if (IS_TEST_RUN && avgId == 0) {
+            _getEnd = System.currentTimeMillis();
+            _avgStart = _getEnd;
+        }
+        if (avgId % AVG_SAMPLE_RATE == 0) {
+            logger.info("getAvgValue - tMin: " + tMin + ", tMax: " + tMax
+                    + ", aMin: " + aMin + ", aMax: " + aMax + ", avgId: " + avgId);
+            if (IS_TEST_RUN && avgId == TEST_BOUNDARY) {
+                long putDuration = _putEnd - _putStart;
+                long getDuration = _getEnd - _getStart;
+                long avgDuration = System.currentTimeMillis() - _avgStart;
+                int putScore = (int) (putCounter.get() / putDuration);
+                int getScore = (int) (getMsgCounter.get() / getDuration);
+                int avgScore = (int) (avgMsgCounter.get() / avgDuration);
+                int totalScore = putScore + getScore + avgScore;
+                logger.info("Test result: \n"
+                        + "\tput: " + putCounter.get() + " / " + putDuration + "ms = " + putScore + "\n"
+                        + "\tget: " + getMsgCounter.get() + " / " + getDuration + "ms = " + getScore + "\n"
+                        + "\tavg: " + avgMsgCounter.get() + " / " + avgDuration + "ms = " + avgScore + "\n"
+                        + "\ttotal: " + totalScore + "\n"
+                );
+                throw new RuntimeException(putScore + "/" + getScore + "/" + avgScore);
+            }
+        }
         long sum = 0;
         int count = 0;
-//        long skip = 0;
+        long skip = 0;
 
-        long offset = tSummary[(int) (tMin / T_INDEX_SUMMARY_RATE)];
-        for (int t = (int) (tMin / T_INDEX_SUMMARY_RATE * T_INDEX_SUMMARY_RATE); t < tMin; t++) {
-            offset += tIndex[t];
-        }
-        offset *= KEY_A_BYTE_LENGTH;
+        long offset = getOffsetByT(tMin);
 
         ByteBuffer aByteBufferForRead = threadBufferForReadA.get();
         aByteBufferForRead.flip();
 
-        for (int t = (int) tMin; t <= tMax; t++) {
-            int aCount = tIndex[t];
+        for (long t = tMin; t <= tMax; t++) {
+            int aCount = tIndex[(int) (t - tBase)];
             while (aCount-- > 0) {
                 if (aByteBufferForRead.remaining() == 0) {
                     try {
                         aByteBufferForRead.clear();
-                        aFileChannel.read(aByteBufferForRead, offset);
+                        aFileChannel.read(aByteBufferForRead, offset * KEY_A_BYTE_LENGTH);
                         aByteBufferForRead.flip();
                     } catch (IOException e) {
                         e.printStackTrace();
                     }
-                    offset += READ_A_BUFFER_SIZE;
                 }
-                long a = aByteBufferForRead.getShort() + t + DIFF_A_BASE_OFFSET;
+                long a = aByteBufferForRead.getLong();
                 if (a >= aMin && a <= aMax) {
                     sum += a;
                     count++;
+                } else {
+                    skip++;
                 }
-//                else {
-//                    skip++;
-//                }
+                offset++;
             }
         }
         aByteBufferForRead.clear();
 
-//        if (avgId % AVG_SAMPLE_RATE == 0) {
-//            logger.info("Got " + count // + ", skip: " + skip
-//                    + ", time: " + (System.currentTimeMillis() - avgStart));
-//        }
-//        if (IS_TEST_RUN) {
-//            avgMsgCounter.addAndGet((int) count);
-//        }
+        if (avgId % AVG_SAMPLE_RATE == 0) {
+            logger.info("Got " + count + ", skip: " + skip
+                    + ", time: " + (System.currentTimeMillis() - avgStart));
+        }
+        if (IS_TEST_RUN) {
+            avgMsgCounter.addAndGet((int) count);
+        }
         return count == 0 ? 0 : sum / count;
+    }
+
+    private void verifyData() {
+        int totalCount = 0;
+        for (long t = tBase; t < 1000000; t++) {
+            if (t % T_INDEX_SUMMARY_FACTOR == 0) {
+                assert tIndexSummary[(int) (t / T_INDEX_SUMMARY_FACTOR)] == totalCount;
+            }
+            int tDiff = (int) (t - tBase);
+            int count = tIndex[tDiff];
+            totalCount += count;
+        }
+        logger.info("Total count: " + totalCount);
+
+        ByteBuffer aByteBufferForRead = threadBufferForReadA.get();
+        ByteBuffer bodyByteBufferForRead = threadBufferForReadBody.get();
+        aByteBufferForRead.flip();
+        bodyByteBufferForRead.flip();
+        long offset = 0;
+
+        while (true) {
+            if (!aByteBufferForRead.hasRemaining()) {
+                try {
+                    aByteBufferForRead.clear();
+                    int nBytes = aFileChannel.read(aByteBufferForRead, offset);
+                    if (nBytes <= 0) {
+                        break;
+                    }
+                    offset += nBytes;
+                    aByteBufferForRead.flip();
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            }
+            long a = aByteBufferForRead.getLong();
+//            logger.info(a);
+        }
+        logger.info("Offset for A: " + offset);
+
+        aByteBufferForRead.clear();
+        bodyByteBufferForRead.clear();
     }
 
     private AtomicLong getMsgCounter = new AtomicLong(0);

@@ -28,10 +28,10 @@ public class LsmMessageStoreImpl extends MessageStore {
     private static final Logger logger = Logger.getLogger(LsmMessageStoreImpl.class);
 
     private static final int MAX_MEM_TABLE_SIZE = 1024;
+    private static final int PERSIST_BUFFER_SIZE = 1024 * 1024;
 
     private static final int T_INDEX_SIZE = 1024 * 1024 * 1024;
     private static final int T_INDEX_SUMMARY_FACTOR = 32;
-    private static final int PERSIST_BUFFER_SIZE = 300 * 10000;
 
     private static final int WRITE_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 1024;
     private static final int READ_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 1024;
@@ -39,8 +39,8 @@ public class LsmMessageStoreImpl extends MessageStore {
     private static final int WRITE_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 1024;
     private static final int READ_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 1024;
 
-    private static final int PERSIST_SAMPLE_RATE = 100;
-    private static final int PUT_SAMPLE_RATE = 10000000;
+    private static final int PERSIST_SAMPLE_RATE = 1000;
+    private static final int PUT_SAMPLE_RATE = 1000000;
     private static final int GET_SAMPLE_RATE = 1000;
     private static final int AVG_SAMPLE_RATE = 1000;
 
@@ -93,14 +93,17 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     @Override
     public void put(Message message) {
-        long putStart = System.currentTimeMillis();
+        long putStart = System.nanoTime();
         int putId = putCounter.getAndIncrement();
         if (IS_TEST_RUN && putId == 0) {
-            _putStart = putStart;
+            _putStart = System.currentTimeMillis();
             _firstStart = putStart;
         }
         if (IS_TEST_RUN && _firstStart > 0 && (putStart - _firstStart) > 60 * 1000) {
             throw new RuntimeException("" + putId);
+        }
+        if (putId % PUT_SAMPLE_RATE == 0) {
+            logger.info("Before add, time: " + (System.nanoTime() - putStart));
         }
 
         synchronized (this) {
@@ -109,10 +112,12 @@ public class LsmMessageStoreImpl extends MessageStore {
 
         if (putId % PUT_SAMPLE_RATE == 0) {
             logger.info("Put message to memTable with t: " + message.getT() + ", a: " + message.getA()
-                    + ", time: " + (System.currentTimeMillis() - putStart) + ", putId: " + putId);
+                    + ", time: " + (System.nanoTime() - putStart) + ", putId: " + putId);
         }
 
+//        if (putId % 10 == 0) {
         tCurrent[threadId.get()] = message.getT();
+//        }
 
         if ((putId + 1) % MAX_MEM_TABLE_SIZE == 0) {
 //            logger.info("Submit memTable persist task, putId: " + putId);
@@ -135,6 +140,9 @@ public class LsmMessageStoreImpl extends MessageStore {
             });
 //            logger.info("Submitted memTable persist task, time: "
 //                    + (System.currentTimeMillis() - putStart) + ", putId: " + putId);
+        }
+        if (putId % PUT_SAMPLE_RATE == 0) {
+            logger.info("Done put, time: " + (System.nanoTime() - putStart));
         }
     }
 

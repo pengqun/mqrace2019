@@ -28,7 +28,7 @@ public class TestMessageStoreImpl extends MessageStore {
     private long totalNegDiff = 0;
     private long negDiffCount = 0;
 
-    private short[] msgCounter = new short[1024 * 1024 * 1024];
+    private short[] msgCounter = new short[1200 * 1024 * 1024];
     private int minRepeat = Integer.MAX_VALUE;
     private int maxRepeat = Integer.MIN_VALUE;
 

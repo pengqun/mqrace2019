@@ -107,18 +107,16 @@ public class LsmMessageStoreImpl extends MessageStore {
             logger.info("Before add, time: " + (System.nanoTime() - putStart));
         }
 
-        synchronized (this) {
+//        synchronized (this) {
             memTable.add(message);
-        }
+//        }
 
         if (putId % PUT_SAMPLE_RATE == 0) {
             logger.info("Put message to memTable with t: " + message.getT() + ", a: " + message.getA()
                     + ", time: " + (System.nanoTime() - putStart) + ", putId: " + putId);
         }
 
-        if (putId % 32 == 0) {
-            tCurrent[threadId.get()] = message.getT();
-        }
+        tCurrent[threadId.get()] = message.getT();
 
         if ((putId + 1) % MAX_MEM_TABLE_SIZE == 0) {
 //            logger.info("Submit memTable persist task, putId: " + putId);
@@ -148,8 +146,8 @@ public class LsmMessageStoreImpl extends MessageStore {
     }
 
     private Collection<Message> createMemTable() {
-//        return new ConcurrentSkipListSet<>((m1, m2) -> {
-        return new TreeSet<>((m1, m2) -> {
+        return new ConcurrentSkipListSet<>((m1, m2) -> {
+//        return new TreeSet<>((m1, m2) -> {
             if (m1.getT() == m2.getT()) {
                 //noinspection ComparatorMethodParameterNotUsed
                 return -1;

@@ -42,7 +42,7 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     private static final int PERSIST_SAMPLE_RATE = 10000;
     private static final int PUT_SAMPLE_RATE = 10000000;
-    private static final int GET_SAMPLE_RATE = 1000;
+    private static final int GET_SAMPLE_RATE = 1;
     private static final int AVG_SAMPLE_RATE = 1000;
 
     private static FileChannel aFileChannel;

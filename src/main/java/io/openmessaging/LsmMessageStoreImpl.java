@@ -42,7 +42,7 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     private static final int PERSIST_SAMPLE_RATE = 10000;
     private static final int PUT_SAMPLE_RATE = 10000000;
-    private static final int GET_SAMPLE_RATE = 1;
+    private static final int GET_SAMPLE_RATE = 1000;
     private static final int AVG_SAMPLE_RATE = 1000;
 
     private static FileChannel aFileChannel;
@@ -152,7 +152,7 @@ public class LsmMessageStoreImpl extends MessageStore {
                 return -1;
             }
             // Order by T desc
-            return (int) (m2.getT() - m1.getT());
+            return m2.getT() < m1.getT() ? -1 : 1;
         });
     }
 
@@ -306,14 +306,23 @@ public class LsmMessageStoreImpl extends MessageStore {
             persistMemTable(memTable, Long.MAX_VALUE);
             flushBuffer(aFileChannel, aByteBufferForWrite);
             flushBuffer(bodyFileChannel, bodyByteBufferForWrite);
-//            verifyData();
+            verifyData();
             persistDone = true;
 
             persistThreadPool.shutdown();
-            logger.info("Flushed all memTables, time: " + (System.currentTimeMillis() - getStart));
+            try {
+                logger.info("Flushed all memTables, msg count1: " + putCounter.get()
+                        + ", msg count2: " + tIndexCounter
+                        + ", file size: " + bodyFileChannel.size()
+                        + ", msg count3: " + bodyFileChannel.size() / BODY_BYTE_LENGTH
+                        + ", persist buffer index: " + persistBufferIndex
+                        + ", time: " + (System.currentTimeMillis() - getStart));
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
         }
         while (!persistDone) {
-            logger.info("Waiting for all persist tasks to finish");
+//            logger.info("Waiting for all persist tasks to finish");
             try {
                 Thread.sleep(10);
             } catch (InterruptedException e) {
@@ -456,43 +465,46 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     private void verifyData() {
         int totalCount = 0;
-        for (long t = tBase; t < 1000000; t++) {
+        for (long t = tBase; t < tBase + tIndex.length; t++) {
             if (t % T_INDEX_SUMMARY_FACTOR == 0) {
                 assert tIndexSummary[(int) (t / T_INDEX_SUMMARY_FACTOR)] == totalCount;
             }
             int tDiff = (int) (t - tBase);
             int count = tIndex[tDiff];
             totalCount += count;
+            if (t % PUT_SAMPLE_RATE == 0) {
+                logger.info("Total count: " + totalCount + ", t: " + t);
+            }
         }
         logger.info("Total count: " + totalCount);
 
-        ByteBuffer aByteBufferForRead = threadBufferForReadA.get();
-        ByteBuffer bodyByteBufferForRead = threadBufferForReadBody.get();
-        aByteBufferForRead.flip();
-        bodyByteBufferForRead.flip();
-        long offset = 0;
-
-        while (true) {
-            if (!aByteBufferForRead.hasRemaining()) {
-                try {
-                    aByteBufferForRead.clear();
-                    int nBytes = aFileChannel.read(aByteBufferForRead, offset);
-                    if (nBytes <= 0) {
-                        break;
-                    }
-                    offset += nBytes;
-                    aByteBufferForRead.flip();
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
-            }
-            long a = aByteBufferForRead.getLong();
-//            logger.info(a);
-        }
-        logger.info("Offset for A: " + offset);
-
-        aByteBufferForRead.clear();
-        bodyByteBufferForRead.clear();
+//        ByteBuffer aByteBufferForRead = threadBufferForReadA.get();
+//        ByteBuffer bodyByteBufferForRead = threadBufferForReadBody.get();
+//        aByteBufferForRead.flip();
+//        bodyByteBufferForRead.flip();
+//        long offset = 0;
+//
+//        while (true) {
+//            if (!aByteBufferForRead.hasRemaining()) {
+//                try {
+//                    aByteBufferForRead.clear();
+//                    int nBytes = aFileChannel.read(aByteBufferForRead, offset);
+//                    if (nBytes <= 0) {
+//                        break;
+//                    }
+//                    offset += nBytes;
+//                    aByteBufferForRead.flip();
+//                } catch (IOException e) {
+//                    e.printStackTrace();
+//                }
+//            }
+////            long a = aByteBufferForRead.getLong();
+////            logger.info(a);
+//        }
+//        logger.info("Offset for A: " + offset);
+//
+//        aByteBufferForRead.clear();
+//        bodyByteBufferForRead.clear();
     }
 
     private AtomicLong getMsgCounter = new AtomicLong(0);

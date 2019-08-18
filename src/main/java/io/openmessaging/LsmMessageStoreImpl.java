@@ -81,6 +81,7 @@ public class LsmMessageStoreImpl extends MessageStore {
     private long[] tCurrent = new long[PRODUCER_THREAD_NUM];
     private int tIndexCounter = 0;
     private long tBase = -1;
+//    private long tMaximum = Long.MIN_VALUE;
 
     private Message sentinelMessage = new Message(Long.MAX_VALUE, Long.MAX_VALUE, null);
 
@@ -199,6 +200,8 @@ public class LsmMessageStoreImpl extends MessageStore {
             return;
         }
 
+//        tMaximum = Math.max(tMaximum, targetBuffer[0].getT());
+
         int index = persistBufferIndex - 1;
         long lastT = targetBuffer[index].getT();
         List<Message> msgBuffer = new ArrayList<>();
@@ -270,10 +273,9 @@ public class LsmMessageStoreImpl extends MessageStore {
         byteBuffer.clear();
     }
 
-    private long getOffsetByT(long t) {
-        int tDiff = (int) (t - tBase);
+    private long getOffsetByTDiff(int tDiff) {
         long offset = tIndexSummary[tDiff / T_INDEX_SUMMARY_FACTOR];
-        for (int i = tDiff / T_INDEX_SUMMARY_FACTOR * T_INDEX_SUMMARY_FACTOR; i < t; i++) {
+        for (int i = tDiff / T_INDEX_SUMMARY_FACTOR * T_INDEX_SUMMARY_FACTOR; i < tDiff; i++) {
             offset += tIndex[i];
         }
         return offset;
@@ -329,8 +331,8 @@ public class LsmMessageStoreImpl extends MessageStore {
         aByteBufferForRead.flip();
         bodyByteBufferForRead.flip();
 
-        long offset = getOffsetByT(tMin);
         int tDiff = (int) (tMin - tBase);
+        long offset = getOffsetByTDiff(tDiff);
 
         for (long t = tMin; t <= tMax; t++) {
             int msgCount = tIndex[tDiff++];
@@ -412,13 +414,14 @@ public class LsmMessageStoreImpl extends MessageStore {
         int count = 0;
         long skip = 0;
 
-        long offset = getOffsetByT(tMin);
+        int tDiff = (int) (tMin - tBase);
+        long offset = getOffsetByTDiff(tDiff);
 
         ByteBuffer aByteBufferForRead = threadBufferForReadA.get();
         aByteBufferForRead.flip();
 
         for (long t = tMin; t <= tMax; t++) {
-            int aCount = tIndex[(int) (t - tBase)];
+            int aCount = tIndex[tDiff++];
             while (aCount-- > 0) {
                 if (aByteBufferForRead.remaining() == 0) {
                     try {
@@ -446,7 +449,7 @@ public class LsmMessageStoreImpl extends MessageStore {
                     + ", time: " + (System.currentTimeMillis() - avgStart));
         }
         if (IS_TEST_RUN) {
-            avgMsgCounter.addAndGet((int) count);
+            avgMsgCounter.addAndGet(count);
         }
         return count == 0 ? 0 : sum / count;
     }

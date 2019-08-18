@@ -24,7 +24,7 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     private static final Logger logger = Logger.getLogger(LsmMessageStoreImpl.class);
 
-    private static final int MAX_MEM_TABLE_SIZE = 128 * 1024;
+    private static final int MAX_MEM_TABLE_SIZE = 32 * 1024;
     private static final int PERSIST_BUFFER_SIZE = 5 * 1024 * 1024;
 
     private static final int T_INDEX_SIZE = 1200 * 1024 * 1024;
@@ -344,7 +344,7 @@ public class LsmMessageStoreImpl extends MessageStore {
 
         for (long t = tMin; t <= tMax; t++) {
             int msgCount = tIndex[tDiff++];
-            while (msgCount-- > 0) {
+            while (msgCount > 0) {
                 if (!aByteBufferForRead.hasRemaining()) {
                     try {
                         aByteBufferForRead.clear();
@@ -365,15 +365,34 @@ public class LsmMessageStoreImpl extends MessageStore {
                 }
 
                 long a = aByteBufferForRead.getLong();
-                if (a >= aMin && a <= aMax) {
+
+                if (a > aMax) {
+                    offset += msgCount;
+                    bodyByteBufferForRead.position(bodyByteBufferForRead.position()
+                            + Math.min(bodyByteBufferForRead.remaining(), msgCount * BODY_BYTE_LENGTH));
+                    break;
+                }
+                if (a < aMin) {
+                    bodyByteBufferForRead.position(bodyByteBufferForRead.position()
+                            + Math.min(bodyByteBufferForRead.remaining(), BODY_BYTE_LENGTH));
+                } else {
+                    if (!bodyByteBufferForRead.hasRemaining()) {
+                        try {
+                            bodyByteBufferForRead.clear();
+                            bodyFileChannel.read(bodyByteBufferForRead, offset * BODY_BYTE_LENGTH);
+                            bodyByteBufferForRead.flip();
+                        } catch (IOException e) {
+                            e.printStackTrace();
+                        }
+                    }
                     byte[] body = new byte[BODY_BYTE_LENGTH];
                     bodyByteBufferForRead.get(body);
                     Message msg = new Message(a, t, body);
                     result.add(msg);
-                } else {
-                    bodyByteBufferForRead.position(bodyByteBufferForRead.position() + BODY_BYTE_LENGTH);
                 }
+
                 offset++;
+                msgCount--;
             }
         }
 
@@ -429,8 +448,8 @@ public class LsmMessageStoreImpl extends MessageStore {
         aByteBufferForRead.flip();
 
         for (long t = tMin; t <= tMax; t++) {
-            int aCount = tIndex[tDiff++];
-            while (aCount-- > 0) {
+            int msgCount = tIndex[tDiff++];
+            while (msgCount > 0) {
                 if (aByteBufferForRead.remaining() == 0) {
                     try {
                         aByteBufferForRead.clear();
@@ -441,13 +460,20 @@ public class LsmMessageStoreImpl extends MessageStore {
                     }
                 }
                 long a = aByteBufferForRead.getLong();
-                if (a >= aMin && a <= aMax) {
+
+                if (a > aMax) {
+                    offset += msgCount;
+                    break;
+                }
+                if (a >= aMin) {
                     sum += a;
                     count++;
                 } else {
                     skip++;
                 }
+
                 offset++;
+                msgCount--;
             }
         }
         aByteBufferForRead.clear();

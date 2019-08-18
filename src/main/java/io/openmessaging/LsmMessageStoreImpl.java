@@ -8,10 +8,7 @@ import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Comparator;
-import java.util.List;
+import java.util.*;
 import java.util.concurrent.ConcurrentSkipListSet;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -101,14 +98,16 @@ public class LsmMessageStoreImpl extends MessageStore {
             _putStart = System.currentTimeMillis();
             _firstStart = _putStart;
         }
-//        if (IS_TEST_RUN && putId == 10000 * 10000) {
-//            throw new RuntimeException("" + (System.currentTimeMillis() - _putStart));
-//        }
+        if (IS_TEST_RUN && putId == 10000 * 10000) {
+            throw new RuntimeException("" + (System.currentTimeMillis() - _putStart));
+        }
 //        if (putId % PUT_SAMPLE_RATE == 0) {
 //            logger.info("Before add, time: " + (System.nanoTime() - putStart));
 //        }
 
-        memTable.add(message);
+        synchronized (this) {
+            memTable.add(message);
+        }
 
         if (putId % PUT_SAMPLE_RATE == 0) {
             logger.info("Put message to memTable with t: " + message.getT() + ", a: " + message.getA()
@@ -125,8 +124,11 @@ public class LsmMessageStoreImpl extends MessageStore {
             }
             long finalCurrentMinT = currentMinT;
 
-            Collection<Message> frozenMemTable = memTable;
-            memTable = createMemTable();
+            Collection<Message> frozenMemTable;
+            synchronized (this) {
+                frozenMemTable = memTable;
+                memTable = createMemTable();
+            }
 
             persistThreadPool.execute(() -> {
                 try {
@@ -145,8 +147,8 @@ public class LsmMessageStoreImpl extends MessageStore {
     }
 
     private Collection<Message> createMemTable() {
-        return new ConcurrentSkipListSet<>((m1, m2) -> {
-//        return new TreeSet<>((m1, m2) -> {
+//        return new ConcurrentSkipListSet<>((m1, m2) -> {
+        return new TreeSet<>((m1, m2) -> {
             if (m1.getT() == m2.getT()) {
                 //noinspection ComparatorMethodParameterNotUsed
                 return -1;
@@ -167,14 +169,6 @@ public class LsmMessageStoreImpl extends MessageStore {
         Message[] sourceBuffer = persistId % 2 == 0? persistBuffer1 : persistBuffer2;
         Message[] targetBuffer = persistId % 2 == 1? persistBuffer1 : persistBuffer2;
 
-        try {
-            Thread.sleep(1);
-        } catch (InterruptedException e) {
-            e.printStackTrace();
-        }
-
-        int oldSize = frozenMemTable.size();
-
         int i = 0;
         int j = 0;
         for (Message message : frozenMemTable) {
@@ -182,18 +176,6 @@ public class LsmMessageStoreImpl extends MessageStore {
                 targetBuffer[j++] = sourceBuffer[i++];
             }
             targetBuffer[j++] = message;
-        }
-
-        if (frozenMemTable.size() != oldSize) {
-//            throw new RuntimeException(frozenMemTable.size() + " " + oldSize);
-            i = 0;
-            j = 0;
-            for (Message message : frozenMemTable) {
-                while (i < persistBufferIndex && sourceBuffer[i].getT() >= message.getT()) {
-                    targetBuffer[j++] = sourceBuffer[i++];
-                }
-                targetBuffer[j++] = message;
-            }
         }
 
         while (i < persistBufferIndex) {
@@ -334,6 +316,9 @@ public class LsmMessageStoreImpl extends MessageStore {
                         + ", time: " + (System.currentTimeMillis() - getStart));
             } catch (IOException e) {
                 e.printStackTrace();
+            }
+            if (putCounter.get() != tIndexCounter) {
+                throw new RuntimeException("Inc: " + (putCounter.get() - tIndexCounter));
             }
         }
         while (!persistDone) {

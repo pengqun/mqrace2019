@@ -24,8 +24,8 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     private static final Logger logger = Logger.getLogger(LsmMessageStoreImpl.class);
 
-    private static final int MAX_MEM_TABLE_SIZE = 64 * 1024;
-    private static final int PERSIST_BUFFER_SIZE = 5 * 1024 * 1024;
+    private static final int MAX_MEM_TABLE_SIZE = 16 * 1024;
+    private static final int PERSIST_BUFFER_SIZE = 1024 * 1024;
 
     private static final int T_INDEX_SIZE = 1200 * 1024 * 1024;
     private static final int T_INDEX_SUMMARY_FACTOR = 32;
@@ -338,6 +338,7 @@ public class LsmMessageStoreImpl extends MessageStore {
         }
 
         ArrayList<Message> result = new ArrayList<>(1024);
+        long skip = 0;
 
         ByteBuffer aByteBufferForRead = threadBufferForReadA.get();
         ByteBuffer bodyByteBufferForRead = threadBufferForReadBody.get();
@@ -359,28 +360,19 @@ public class LsmMessageStoreImpl extends MessageStore {
                         e.printStackTrace();
                     }
                 }
-                if (!bodyByteBufferForRead.hasRemaining()) {
-                    try {
-                        bodyByteBufferForRead.clear();
-                        bodyFileChannel.read(bodyByteBufferForRead, offset * BODY_BYTE_LENGTH);
-                        bodyByteBufferForRead.flip();
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                    }
-                }
-
                 long a = aByteBufferForRead.getLong();
-
                 if (a > aMax) {
                     offset += msgCount;
+                    skip += msgCount;
+                    if (msgCount > 1) {
+                        aByteBufferForRead.position(aByteBufferForRead.position()
+                                + Math.min(aByteBufferForRead.remaining(), (msgCount - 1) * KEY_A_BYTE_LENGTH));
+                    }
                     bodyByteBufferForRead.position(bodyByteBufferForRead.position()
                             + Math.min(bodyByteBufferForRead.remaining(), msgCount * BODY_BYTE_LENGTH));
                     break;
                 }
-                if (a < aMin) {
-                    bodyByteBufferForRead.position(bodyByteBufferForRead.position()
-                            + Math.min(bodyByteBufferForRead.remaining(), BODY_BYTE_LENGTH));
-                } else {
+                if (a >= aMin) {
                     if (!bodyByteBufferForRead.hasRemaining()) {
                         try {
                             bodyByteBufferForRead.clear();
@@ -394,8 +386,11 @@ public class LsmMessageStoreImpl extends MessageStore {
                     bodyByteBufferForRead.get(body);
                     Message msg = new Message(a, t, body);
                     result.add(msg);
+                } else {
+                    bodyByteBufferForRead.position(bodyByteBufferForRead.position()
+                            + Math.min(bodyByteBufferForRead.remaining(), BODY_BYTE_LENGTH));
+                    skip++;
                 }
-
                 offset++;
                 msgCount--;
             }
@@ -408,7 +403,7 @@ public class LsmMessageStoreImpl extends MessageStore {
             getMsgCounter.addAndGet(result.size());
         }
         if (getId % GET_SAMPLE_RATE == 0) {
-            logger.info("Return sorted result with size: " + result.size()
+            logger.info("Return sorted result with size: " + result.size() + ", skip: " + skip
                     + ", time: " + (System.currentTimeMillis() - getStart) + ", getId: " + getId);
         }
         return result;
@@ -465,9 +460,13 @@ public class LsmMessageStoreImpl extends MessageStore {
                     }
                 }
                 long a = aByteBufferForRead.getLong();
-
                 if (a > aMax) {
                     offset += msgCount;
+                    skip += msgCount;
+                    if (msgCount > 1) {
+                        aByteBufferForRead.position(aByteBufferForRead.position()
+                                + Math.min(aByteBufferForRead.remaining(), (msgCount - 1) * KEY_A_BYTE_LENGTH));
+                    }
                     break;
                 }
                 if (a >= aMin) {

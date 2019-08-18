@@ -185,7 +185,15 @@ public class LsmMessageStoreImpl extends MessageStore {
         }
 
         if (frozenMemTable.size() != oldSize) {
-            throw new RuntimeException(frozenMemTable.size() + " " + oldSize);
+//            throw new RuntimeException(frozenMemTable.size() + " " + oldSize);
+            i = 0;
+            j = 0;
+            for (Message message : frozenMemTable) {
+                while (i < persistBufferIndex && sourceBuffer[i].getT() >= message.getT()) {
+                    targetBuffer[j++] = sourceBuffer[i++];
+                }
+                targetBuffer[j++] = message;
+            }
         }
 
         while (i < persistBufferIndex) {
@@ -313,7 +321,7 @@ public class LsmMessageStoreImpl extends MessageStore {
             persistMemTable(memTable, Long.MAX_VALUE);
             flushBuffer(aFileChannel, aByteBufferForWrite);
             flushBuffer(bodyFileChannel, bodyByteBufferForWrite);
-            verifyData();
+//            verifyData();
             persistDone = true;
 
             persistThreadPool.shutdown();

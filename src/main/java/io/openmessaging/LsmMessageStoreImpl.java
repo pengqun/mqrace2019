@@ -24,7 +24,7 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     private static final Logger logger = Logger.getLogger(LsmMessageStoreImpl.class);
 
-    private static final int MAX_MEM_TABLE_SIZE = 8 * 1024;
+    private static final int MAX_MEM_TABLE_SIZE = 16 * 1024;
     private static final int PERSIST_BUFFER_SIZE = 5 * 1024 * 1024;
 
     private static final int T_INDEX_SIZE = 1200 * 1024 * 1024;
@@ -77,7 +77,9 @@ public class LsmMessageStoreImpl extends MessageStore {
     private long[] tCurrent = new long[PRODUCER_THREAD_NUM];
     private int tIndexCounter = 0;
     private long tBase = -1;
+
 //    private long tMaximum = Long.MIN_VALUE;
+    private long maxBufferIndex = Long.MIN_VALUE;
 
     private Message sentinelMessage = new Message(Long.MAX_VALUE, Long.MAX_VALUE, null);
 
@@ -181,6 +183,8 @@ public class LsmMessageStoreImpl extends MessageStore {
             targetBuffer[j++] = sourceBuffer[i++];
         }
         persistBufferIndex = j;
+        maxBufferIndex = Math.max(maxBufferIndex, persistBufferIndex);
+
         if (persistId % PERSIST_SAMPLE_RATE == 0) {
             logger.info("Copied memTable with size: " + frozenMemTable.size() + " to buffer with index: " + persistBufferIndex
                     + ", time: " + (System.currentTimeMillis() - persistStart) + ", persistId: " + persistId);
@@ -312,6 +316,7 @@ public class LsmMessageStoreImpl extends MessageStore {
                         + ", file size: " + bodyFileChannel.size()
                         + ", msg count3: " + bodyFileChannel.size() / BODY_BYTE_LENGTH
                         + ", persist buffer index: " + persistBufferIndex
+                        + ", max buffer index: " + maxBufferIndex
                         + ", time: " + (System.currentTimeMillis() - getStart));
             } catch (IOException e) {
                 e.printStackTrace();

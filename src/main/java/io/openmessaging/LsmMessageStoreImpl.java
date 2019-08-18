@@ -167,11 +167,13 @@ public class LsmMessageStoreImpl extends MessageStore {
         Message[] sourceBuffer = persistId % 2 == 0? persistBuffer1 : persistBuffer2;
         Message[] targetBuffer = persistId % 2 == 1? persistBuffer1 : persistBuffer2;
 
-//        try {
-//            Thread.sleep(1);
-//        } catch (InterruptedException e) {
-//            e.printStackTrace();
-//        }
+        try {
+            Thread.sleep(1);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+
+        int oldSize = frozenMemTable.size();
 
         int i = 0;
         int j = 0;
@@ -181,6 +183,11 @@ public class LsmMessageStoreImpl extends MessageStore {
             }
             targetBuffer[j++] = message;
         }
+
+        if (frozenMemTable.size() != oldSize) {
+            throw new RuntimeException(frozenMemTable.size() + " " + oldSize);
+        }
+
         while (i < persistBufferIndex) {
             targetBuffer[j++] = sourceBuffer[i++];
         }

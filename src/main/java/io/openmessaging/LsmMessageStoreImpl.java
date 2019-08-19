@@ -24,16 +24,16 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     private static final Logger logger = Logger.getLogger(LsmMessageStoreImpl.class);
 
-    private static final int MAX_MEM_TABLE_SIZE = 16 * 1024;
+    private static final int MAX_MEM_TABLE_SIZE = 10 * 10000;
     private static final int PERSIST_BUFFER_SIZE = 5 * 1024 * 1024;
 
     private static final int T_INDEX_SIZE = 1200 * 1024 * 1024;
     private static final int T_INDEX_SUMMARY_FACTOR = 32;
 
-    private static final int WRITE_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 4096;
+    private static final int WRITE_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 1024;
     private static final int READ_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 128;
 
-    private static final int WRITE_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 4096;
+    private static final int WRITE_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 1024;
     private static final int READ_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 128;
 
     private static final int PERSIST_SAMPLE_RATE = 1000;

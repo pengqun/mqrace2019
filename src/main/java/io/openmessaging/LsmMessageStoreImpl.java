@@ -25,7 +25,7 @@ public class LsmMessageStoreImpl extends MessageStore {
     private static final Logger logger = Logger.getLogger(LsmMessageStoreImpl.class);
 
     private static final int MAX_MEM_TABLE_SIZE = 16 * 1024;
-    private static final int PERSIST_BUFFER_SIZE = 1024 * 1024;
+    private static final int PERSIST_BUFFER_SIZE = 5 * 1024 * 1024;
 
     private static final int T_INDEX_SIZE = 1200 * 1024 * 1024;
     private static final int T_INDEX_SUMMARY_FACTOR = 32;
@@ -99,9 +99,9 @@ public class LsmMessageStoreImpl extends MessageStore {
             _putStart = System.currentTimeMillis();
             _firstStart = _putStart;
         }
-//        if (putId == 10000 * 10000) {
-//            throw new RuntimeException("" + (System.currentTimeMillis() - _putStart));
-//        }
+        if (putId == 10000 * 10000) {
+            throw new RuntimeException("" + (System.currentTimeMillis() - _putStart));
+        }
 //        if (putId % PUT_SAMPLE_RATE == 0) {
 //            logger.info("Before add, time: " + (System.nanoTime() - putStart));
 //        }

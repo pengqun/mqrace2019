@@ -99,7 +99,7 @@ public class LsmMessageStoreImpl extends MessageStore {
             _putStart = System.currentTimeMillis();
             _firstStart = _putStart;
         }
-        if (putId == 10000 * 10000) {
+        if (IS_TEST_RUN && putId == 10000 * 10000) {
             throw new RuntimeException("" + (System.currentTimeMillis() - _putStart));
         }
 //        if (putId % PUT_SAMPLE_RATE == 0) {
@@ -228,14 +228,14 @@ public class LsmMessageStoreImpl extends MessageStore {
 
                 // store a and body
                 for (Message message : msgBuffer) {
-                    if (!aByteBufferForWrite.hasRemaining()) {
-                        flushBuffer(aFileChannel, aByteBufferForWrite);
-                    }
-                    aByteBufferForWrite.putLong(message.getA());
-                    if (!bodyByteBufferForWrite.hasRemaining()) {
-                        flushBuffer(bodyFileChannel, bodyByteBufferForWrite);
-                    }
-                    bodyByteBufferForWrite.put(message.getBody());
+//                    if (!aByteBufferForWrite.hasRemaining()) {
+//                        flushBuffer(aFileChannel, aByteBufferForWrite);
+//                    }
+//                    aByteBufferForWrite.putLong(message.getA());
+//                    if (!bodyByteBufferForWrite.hasRemaining()) {
+//                        flushBuffer(bodyFileChannel, bodyByteBufferForWrite);
+//                    }
+//                    bodyByteBufferForWrite.put(message.getBody());
                 }
                 tIndexCounter += msgCount;
                 msgBuffer.clear();

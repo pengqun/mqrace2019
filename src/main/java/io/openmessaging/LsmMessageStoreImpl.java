@@ -228,14 +228,14 @@ public class LsmMessageStoreImpl extends MessageStore {
 
                 // store a and body
                 for (Message message : msgBuffer) {
-//                    if (!aByteBufferForWrite.hasRemaining()) {
-//                        flushBuffer(aFileChannel, aByteBufferForWrite);
-//                    }
-//                    aByteBufferForWrite.putLong(message.getA());
-//                    if (!bodyByteBufferForWrite.hasRemaining()) {
-//                        flushBuffer(bodyFileChannel, bodyByteBufferForWrite);
-//                    }
-//                    bodyByteBufferForWrite.put(message.getBody());
+                    if (!aByteBufferForWrite.hasRemaining()) {
+                        flushBuffer(aFileChannel, aByteBufferForWrite);
+                    }
+                    aByteBufferForWrite.putLong(message.getA());
+                    if (!bodyByteBufferForWrite.hasRemaining()) {
+                        flushBuffer(bodyFileChannel, bodyByteBufferForWrite);
+                    }
+                    bodyByteBufferForWrite.put(message.getBody());
                 }
                 tIndexCounter += msgCount;
                 msgBuffer.clear();

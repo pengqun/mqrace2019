@@ -31,7 +31,7 @@ public class LsmMessageStoreImpl extends MessageStore {
     private static final int T_INDEX_SUMMARY_FACTOR = 32;
 
     private static final int WRITE_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 1024;
-    private static final int READ_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 512;
+    private static final int READ_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 128;
 
     private static final int WRITE_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 1024;
     private static final int READ_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 128;

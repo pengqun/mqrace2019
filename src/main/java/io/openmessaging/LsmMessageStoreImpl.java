@@ -33,7 +33,7 @@ public class LsmMessageStoreImpl extends MessageStore {
     private static final int WRITE_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 1024;
     private static final int READ_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 128;
 
-    private static final int WRITE_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 128;
+    private static final int WRITE_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 1024;
     private static final int READ_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 128;
 
     private static final int PERSIST_SAMPLE_RATE = 100;
@@ -97,11 +97,10 @@ public class LsmMessageStoreImpl extends MessageStore {
         int putId = putCounter.getAndIncrement();
         if (IS_TEST_RUN && putId == 0) {
             _putStart = System.currentTimeMillis();
-            _firstStart = _putStart;
         }
-        if (IS_TEST_RUN && putId == 10000 * 10000) {
-            throw new RuntimeException("" + (System.currentTimeMillis() - _putStart));
-        }
+//        if (IS_TEST_RUN && putId == 10000 * 10000) {
+//            throw new RuntimeException("" + (System.currentTimeMillis() - _putStart));
+//        }
 //        if (putId % PUT_SAMPLE_RATE == 0) {
 //            logger.info("Before add, time: " + (System.nanoTime() - putStart));
 //        }
@@ -544,5 +543,4 @@ public class LsmMessageStoreImpl extends MessageStore {
     private long _getStart = 0;
     private long _getEnd = 0;
     private long _avgStart = 0;
-    private long _firstStart = 0;
 }

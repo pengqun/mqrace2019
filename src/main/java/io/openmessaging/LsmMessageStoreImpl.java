@@ -24,38 +24,51 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     private static final Logger logger = Logger.getLogger(LsmMessageStoreImpl.class);
 
-    private static final int MAX_MEM_TABLE_SIZE = 10 * 10000;
+    private static final int MAX_MEM_TABLE_SIZE = 128 * 1024;
     private static final int PERSIST_BUFFER_SIZE = 5 * 1024 * 1024;
+
+    private static final int DATA_SEGMENT_SIZE = 100 * 1000 * 1000;
+//    private static final int DATA_SEGMENT_SIZE = 99 * 1000;
 
     private static final int T_INDEX_SIZE = 1200 * 1024 * 1024;
     private static final int T_INDEX_SUMMARY_FACTOR = 32;
 
     private static final int WRITE_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 1024;
-    private static final int READ_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 128;
+    private static final int READ_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 1024;
 
     private static final int WRITE_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 1024;
-    private static final int READ_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 128;
+    private static final int READ_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 1024;
 
     private static final int PERSIST_SAMPLE_RATE = 100;
     private static final int PUT_SAMPLE_RATE = 10000000;
     private static final int GET_SAMPLE_RATE = 1000;
     private static final int AVG_SAMPLE_RATE = 1000;
 
-    private static FileChannel aFileChannel;
-    private static FileChannel bodyFileChannel;
-    private static ByteBuffer aByteBufferForWrite = ByteBuffer.allocateDirect(WRITE_A_BUFFER_SIZE);
-    private static ByteBuffer bodyByteBufferForWrite = ByteBuffer.allocateDirect(WRITE_BODY_BUFFER_SIZE);
+    private static List<DataFile> dataFileList = new ArrayList<>();
+    private static DataFile curDataFile = null;
 
     static {
-        logger.info("LsmMessageStoreImpl loaded");
-        try {
-            RandomAccessFile aFile = new RandomAccessFile(Constants.DATA_DIR + "a.data", "rw");
-            aFileChannel = aFile.getChannel();
-            RandomAccessFile bodyFile = new RandomAccessFile(Constants.DATA_DIR + "body.data", "rw");
-            bodyFileChannel = bodyFile.getChannel();
-        } catch (FileNotFoundException e) {
-            e.printStackTrace();
+        logger.info("LsmMessageStoreImpl load start");
+        for (int i = 0; i <= Integer.MAX_VALUE / DATA_SEGMENT_SIZE; i++) {
+//        for (int i = 0; i <= 200 * 10000 / DATA_SEGMENT_SIZE; i++) {
+            DataFile dataFile = new DataFile();
+            try {
+                dataFile.aFile = new RandomAccessFile(Constants.DATA_DIR + "a" + i + ".data", "rw");
+                dataFile.bodyFile = new RandomAccessFile(Constants.DATA_DIR + "body" + i + ".data", "rw");
+            } catch (FileNotFoundException e) {
+                e.printStackTrace();
+            }
+            dataFile.aChannel = dataFile.aFile.getChannel();
+            dataFile.bodyChannel = dataFile.bodyFile.getChannel();
+            dataFile.start = i * DATA_SEGMENT_SIZE;
+            dataFile.end = (i + 1) * DATA_SEGMENT_SIZE - 1;
+            if (dataFile.end < 0) {
+                dataFile.end = Integer.MAX_VALUE;
+            }
+            dataFileList.add(dataFile);
+            logger.info("Created data file: [" + dataFile.start + ", " + dataFile.end + "]");
         }
+        logger.info("LsmMessageStoreImpl load end");
     }
 
     private ThreadPoolExecutor persistThreadPool = new ThreadPoolExecutor(
@@ -98,9 +111,9 @@ public class LsmMessageStoreImpl extends MessageStore {
         if (IS_TEST_RUN && putId == 0) {
             _putStart = System.currentTimeMillis();
         }
-//        if (IS_TEST_RUN && putId == 10000 * 10000) {
-//            throw new RuntimeException("" + (System.currentTimeMillis() - _putStart));
-//        }
+        if (IS_TEST_RUN && putId == 20000 * 10000) {
+            throw new RuntimeException("" + (System.currentTimeMillis() - _putStart));
+        }
 //        if (putId % PUT_SAMPLE_RATE == 0) {
 //            logger.info("Before add, time: " + (System.nanoTime() - putStart));
 //        }
@@ -211,10 +224,11 @@ public class LsmMessageStoreImpl extends MessageStore {
 
             if (t != lastT) {
                 int msgCount = msgBuffer.size();
+                int tDiff = (int) (lastT - tBase);
 
                 // update t index
                 if (msgCount < Short.MAX_VALUE) {
-                    tIndex[(int) (lastT - tBase)] = (short) msgCount;
+                    tIndex[tDiff] = (short) msgCount;
                 } else {
                     // TODO store overflowed count to additional map
                     throw new RuntimeException("A count is larger than short max");
@@ -227,16 +241,18 @@ public class LsmMessageStoreImpl extends MessageStore {
 
                 // store a and body
                 for (Message message : msgBuffer) {
-                    if (!aByteBufferForWrite.hasRemaining()) {
-                        flushBuffer(aFileChannel, aByteBufferForWrite);
+                    if (tIndexCounter % DATA_SEGMENT_SIZE == 0) {
+                        if (curDataFile != null) {
+                            curDataFile.flushABuffer();
+                            curDataFile.flushBodyBuffer();
+                            logger.info("Flushed data file with start " + curDataFile.start + " at offset: " + tIndexCounter);
+                        }
+                        curDataFile = dataFileList.get(tIndexCounter / DATA_SEGMENT_SIZE);
                     }
-                    aByteBufferForWrite.putLong(message.getA());
-                    if (!bodyByteBufferForWrite.hasRemaining()) {
-                        flushBuffer(bodyFileChannel, bodyByteBufferForWrite);
-                    }
-                    bodyByteBufferForWrite.put(message.getBody());
+                    curDataFile.writeA(message.getA());
+                    curDataFile.writeBody(message.getBody());
+                    tIndexCounter++;
                 }
-                tIndexCounter += msgCount;
                 msgBuffer.clear();
 
                 // update t index summary
@@ -260,16 +276,6 @@ public class LsmMessageStoreImpl extends MessageStore {
                     + ", buffer index: " + persistBufferIndex
                     + ", time: " + (System.currentTimeMillis() - persistStart) + ", persistId: " + persistId);
         }
-    }
-
-    private void flushBuffer(FileChannel fileChannel, ByteBuffer byteBuffer) {
-        byteBuffer.flip();
-        try {
-            fileChannel.write(byteBuffer);
-        } catch (IOException e) {
-            logger.info("[ERROR] Write to channel failed: " + e.getMessage());
-        }
-        byteBuffer.clear();
     }
 
     private long getOffsetByTDiff(int tDiff) {
@@ -303,23 +309,20 @@ public class LsmMessageStoreImpl extends MessageStore {
                 }
             }
             persistMemTable(memTable, Long.MAX_VALUE);
-            flushBuffer(aFileChannel, aByteBufferForWrite);
-            flushBuffer(bodyFileChannel, bodyByteBufferForWrite);
+
+            curDataFile.flushABuffer();
+            curDataFile.flushBodyBuffer();
+            logger.info("Flushed data file with start " + curDataFile.start + " at end");
+
 //            verifyData();
             persistDone = true;
 
             persistThreadPool.shutdown();
-            try {
-                logger.info("Flushed all memTables, msg count1: " + putCounter.get()
-                        + ", msg count2: " + tIndexCounter
-                        + ", file size: " + bodyFileChannel.size()
-                        + ", msg count3: " + bodyFileChannel.size() / BODY_BYTE_LENGTH
-                        + ", persist buffer index: " + persistBufferIndex
-                        + ", max buffer index: " + maxBufferIndex
-                        + ", time: " + (System.currentTimeMillis() - getStart));
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
+            logger.info("Flushed all memTables, msg count1: " + putCounter.get()
+                    + ", msg count2: " + tIndexCounter
+                    + ", persist buffer index: " + persistBufferIndex
+                    + ", max buffer index: " + maxBufferIndex
+                    + ", time: " + (System.currentTimeMillis() - getStart));
             if (putCounter.get() != tIndexCounter) {
                 throw new RuntimeException("Inc: " + (putCounter.get() - tIndexCounter));
             }
@@ -351,13 +354,7 @@ public class LsmMessageStoreImpl extends MessageStore {
             int msgCount = tIndex[tDiff++];
             while (msgCount > 0) {
                 if (!aByteBufferForRead.hasRemaining()) {
-                    try {
-                        aByteBufferForRead.clear();
-                        aFileChannel.read(aByteBufferForRead, offset * KEY_A_BYTE_LENGTH);
-                        aByteBufferForRead.flip();
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                    }
+                    fillReadABuffer(aByteBufferForRead, offset);
                 }
                 long a = aByteBufferForRead.getLong();
                 if (a > aMax) {
@@ -373,13 +370,7 @@ public class LsmMessageStoreImpl extends MessageStore {
                 }
                 if (a >= aMin) {
                     if (!bodyByteBufferForRead.hasRemaining()) {
-                        try {
-                            bodyByteBufferForRead.clear();
-                            bodyFileChannel.read(bodyByteBufferForRead, offset * BODY_BYTE_LENGTH);
-                            bodyByteBufferForRead.flip();
-                        } catch (IOException e) {
-                            e.printStackTrace();
-                        }
+                        fillReadBodyBuffer(bodyByteBufferForRead, offset);
                     }
                     byte[] body = new byte[BODY_BYTE_LENGTH];
                     bodyByteBufferForRead.get(body);
@@ -440,23 +431,17 @@ public class LsmMessageStoreImpl extends MessageStore {
         int count = 0;
         long skip = 0;
 
-        int tDiff = (int) (tMin - tBase);
-        long offset = getOffsetByTDiff(tDiff);
-
         ByteBuffer aByteBufferForRead = threadBufferForReadA.get();
         aByteBufferForRead.flip();
+
+        int tDiff = (int) (tMin - tBase);
+        long offset = getOffsetByTDiff(tDiff);
 
         for (long t = tMin; t <= tMax; t++) {
             int msgCount = tIndex[tDiff++];
             while (msgCount > 0) {
                 if (aByteBufferForRead.remaining() == 0) {
-                    try {
-                        aByteBufferForRead.clear();
-                        aFileChannel.read(aByteBufferForRead, offset * KEY_A_BYTE_LENGTH);
-                        aByteBufferForRead.flip();
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                    }
+                    fillReadABuffer(aByteBufferForRead, offset);
                 }
                 long a = aByteBufferForRead.getLong();
                 if (a > aMax) {
@@ -533,6 +518,73 @@ public class LsmMessageStoreImpl extends MessageStore {
 //
 //        aByteBufferForRead.clear();
 //        bodyByteBufferForRead.clear();
+    }
+
+    void fillReadABuffer(ByteBuffer readABuffer, long offset) {
+        DataFile dataFile = dataFileList.get((int) (offset / DATA_SEGMENT_SIZE));
+        try {
+            readABuffer.clear();
+            dataFile.aChannel.read(readABuffer, (offset - dataFile.start) * KEY_A_BYTE_LENGTH);
+            readABuffer.flip();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    void fillReadBodyBuffer(ByteBuffer readBodyBuffer, long offset) {
+        DataFile dataFile = dataFileList.get((int) (offset / DATA_SEGMENT_SIZE));
+        try {
+            readBodyBuffer.clear();
+            dataFile.bodyChannel.read(readBodyBuffer, (offset - dataFile.start) * BODY_BYTE_LENGTH);
+            readBodyBuffer.flip();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private static class DataFile {
+        int start;
+        int end;
+        RandomAccessFile aFile;
+        RandomAccessFile bodyFile;
+        FileChannel aChannel;
+        FileChannel bodyChannel;
+        ByteBuffer aBufferForWrite = ByteBuffer.allocateDirect(WRITE_A_BUFFER_SIZE);
+        ByteBuffer bodyBufferForWrite = ByteBuffer.allocateDirect(WRITE_BODY_BUFFER_SIZE);
+
+        void writeA(long a) {
+            if (!aBufferForWrite.hasRemaining()) {
+                flushABuffer();
+            }
+            aBufferForWrite.putLong(a);
+        }
+
+        void writeBody(byte[] body) {
+            if (!bodyBufferForWrite.hasRemaining()) {
+                flushBodyBuffer();
+            }
+            bodyBufferForWrite.put(body);
+        }
+
+        void flushABuffer() {
+            aBufferForWrite.flip();
+            try {
+                aChannel.write(aBufferForWrite);
+            } catch (IOException e) {
+                logger.info("[ERROR] Write to channel failed: " + e.getMessage());
+            }
+            aBufferForWrite.clear();
+        }
+
+        void flushBodyBuffer() {
+            bodyBufferForWrite.flip();
+            try {
+                bodyChannel.write(bodyBufferForWrite);
+            } catch (IOException e) {
+                logger.info("[ERROR] Write to channel failed: " + e.getMessage());
+            }
+            bodyBufferForWrite.clear();
+        }
     }
 
     private AtomicLong getMsgCounter = new AtomicLong(0);

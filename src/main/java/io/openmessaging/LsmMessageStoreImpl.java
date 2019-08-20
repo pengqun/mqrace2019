@@ -25,7 +25,7 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     private static final Logger logger = Logger.getLogger(LsmMessageStoreImpl.class);
 
-    private static final int MAX_MEM_TABLE_SIZE = 20 * 10000;
+    private static final int MAX_MEM_TABLE_SIZE = 30 * 10000;
     private static final int PERSIST_BUFFER_SIZE = 5 * 1024 * 1024;
 
     private static final int DATA_SEGMENT_SIZE = 100 * 1000 * 1000;
@@ -38,7 +38,7 @@ public class LsmMessageStoreImpl extends MessageStore {
     private static final int READ_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 1024;
 
     private static final int WRITE_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 1024;
-    private static final int READ_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 1024;
+    private static final int READ_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 128;
 
     private static final int PERSIST_SAMPLE_RATE = 100;
     private static final int PUT_SAMPLE_RATE = 10000000;
@@ -313,7 +313,7 @@ public class LsmMessageStoreImpl extends MessageStore {
             while (persistThreadPool.getActiveCount() + persistThreadPool.getQueue().size() > 0) {
                 logger.info("Waiting for previous persist tasks to finish");
                 try {
-                    Thread.sleep(10);
+                    Thread.sleep(50);
                 } catch (InterruptedException e) {
                     e.printStackTrace();
                 }
@@ -340,7 +340,7 @@ public class LsmMessageStoreImpl extends MessageStore {
         while (!persistDone) {
 //            logger.info("Waiting for all persist tasks to finish");
             try {
-                Thread.sleep(10);
+                Thread.sleep(50);
             } catch (InterruptedException e) {
                 e.printStackTrace();
             }
@@ -532,7 +532,7 @@ public class LsmMessageStoreImpl extends MessageStore {
 //        bodyByteBufferForRead.clear();
     }
 
-    void fillReadABuffer(ByteBuffer readABuffer, long offset) {
+    private void fillReadABuffer(ByteBuffer readABuffer, long offset) {
         DataFile dataFile = dataFileList.get((int) (offset / DATA_SEGMENT_SIZE));
         try {
             readABuffer.clear();
@@ -543,7 +543,7 @@ public class LsmMessageStoreImpl extends MessageStore {
         }
     }
 
-    void fillReadBodyBuffer(ByteBuffer readBodyBuffer, long offset) {
+    private void fillReadBodyBuffer(ByteBuffer readBodyBuffer, long offset) {
         DataFile dataFile = dataFileList.get((int) (offset / DATA_SEGMENT_SIZE));
         try {
             readBodyBuffer.clear();

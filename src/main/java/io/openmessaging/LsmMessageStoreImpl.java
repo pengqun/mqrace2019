@@ -25,8 +25,8 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     private static final Logger logger = Logger.getLogger(LsmMessageStoreImpl.class);
 
-    private static final int MAX_MEM_TABLE_SIZE = 30 * 10000;
-    private static final int PERSIST_BUFFER_SIZE = 5 * 1024 * 1024;
+    private static final int MAX_MEM_TABLE_SIZE = 15 * 10000;
+    private static final int PERSIST_BUFFER_SIZE = 4 * 1024 * 1024;
 
     private static final int DATA_SEGMENT_SIZE = 100 * 1000 * 1000;
 //    private static final int DATA_SEGMENT_SIZE = 99 * 1000;
@@ -35,10 +35,10 @@ public class LsmMessageStoreImpl extends MessageStore {
     private static final int T_INDEX_SUMMARY_FACTOR = 32;
 
     private static final int WRITE_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 1024;
-    private static final int READ_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 1024;
+    private static final int READ_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 4096;
 
     private static final int WRITE_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 1024;
-    private static final int READ_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 128;
+    private static final int READ_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 4096;
 
     private static final int PERSIST_SAMPLE_RATE = 100;
     private static final int PUT_SAMPLE_RATE = 10000000;

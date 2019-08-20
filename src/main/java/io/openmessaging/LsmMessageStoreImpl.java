@@ -25,6 +25,9 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     private static final Logger logger = Logger.getLogger(LsmMessageStoreImpl.class);
 
+    private static final long T_UPPER_LIMIT = Long.MAX_VALUE;
+    private static final long A_UPPER_LIMIT = Long.MAX_VALUE;
+
     private static final int MAX_MEM_TABLE_SIZE = 20 * 10000;
     private static final int PERSIST_BUFFER_SIZE = 4 * 1024 * 1024;
 
@@ -95,7 +98,7 @@ public class LsmMessageStoreImpl extends MessageStore {
 //    private long tMaximum = Long.MIN_VALUE;
     private long maxBufferIndex = Long.MIN_VALUE;
 
-    private Message sentinelMessage = new Message(Long.MAX_VALUE, Long.MAX_VALUE, null);
+    private Message sentinelMessage = new Message(T_UPPER_LIMIT, A_UPPER_LIMIT, null);
 
     private ThreadLocal<ByteBuffer> threadBufferForReadA = ThreadLocal.withInitial(()
             -> ByteBuffer.allocateDirect(READ_A_BUFFER_SIZE));
@@ -265,8 +268,9 @@ public class LsmMessageStoreImpl extends MessageStore {
                 msgBuffer.clear();
 
                 // update t index summary
-                if ((t - tBase) % T_INDEX_SUMMARY_FACTOR == 0) {
-                    tIndexSummary[(int) ((t - tBase) / T_INDEX_SUMMARY_FACTOR)] = tIndexCounter;
+                tDiff = (int) (t - tBase);
+                if (tDiff > 0 && tDiff % T_INDEX_SUMMARY_FACTOR == 0) {
+                    tIndexSummary[(tDiff / T_INDEX_SUMMARY_FACTOR)] = tIndexCounter;
                 }
             }
 
@@ -320,7 +324,7 @@ public class LsmMessageStoreImpl extends MessageStore {
                     e.printStackTrace();
                 }
             }
-            persistMemTable(memTable, Long.MAX_VALUE);
+            persistMemTable(memTable, T_UPPER_LIMIT);
 
             curDataFile.flushABuffer();
             curDataFile.flushBodyBuffer();

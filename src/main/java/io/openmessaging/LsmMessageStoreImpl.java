@@ -180,8 +180,8 @@ public class LsmMessageStoreImpl extends MessageStore {
                     + ", buffer index: " + persistBufferIndex + ", persistId: " + persistId);
         }
 
-        int sortCount = 0;
-        int sortTimes = 0;
+//        int sortCount = 0;
+//        int sortTimes = 0;
 
         Message[] sourceBuffer = persistId % 2 == 0? persistBuffer1 : persistBuffer2;
         Message[] targetBuffer = persistId % 2 == 1? persistBuffer1 : persistBuffer2;
@@ -238,12 +238,12 @@ public class LsmMessageStoreImpl extends MessageStore {
                     throw new RuntimeException("A count is larger than short max");
                 }
 
-                // sort by a
-                if (msgCount > 1) {
-                    msgBuffer.sort(Comparator.comparingLong(Message::getA));
-                    sortCount += msgCount;
-                    sortTimes++;
-                }
+//                // sort by a
+//                if (msgCount > 1) {
+//                    msgBuffer.sort(Comparator.comparingLong(Message::getA));
+//                    sortCount += msgCount;
+//                    sortTimes++;
+//                }
 
                 // store a and body
                 for (Message message : msgBuffer) {
@@ -281,9 +281,9 @@ public class LsmMessageStoreImpl extends MessageStore {
         if (persistId % PERSIST_SAMPLE_RATE == 0) {
             logger.info("Done persisting memTable with size: " + frozenMemTable.size()
                     + ", buffer index: " + persistBufferIndex
-                    + ", sort count: " + sortCount
-                    + ", sort times: " + sortTimes
-                    + ", avg sort num: " + (sortTimes > 0 ? sortCount / sortTimes : 0)
+//                    + ", sort count: " + sortCount
+//                    + ", sort times: " + sortTimes
+//                    + ", avg sort num: " + (sortTimes > 0 ? sortCount / sortTimes : 0)
                     + ", time: " + (System.currentTimeMillis() - persistStart) + ", persistId: " + persistId);
         }
     }
@@ -367,18 +367,19 @@ public class LsmMessageStoreImpl extends MessageStore {
                     fillReadABuffer(aByteBufferForRead, offset);
                 }
                 long a = aByteBufferForRead.getLong();
-                if (a > aMax) {
-                    offset += msgCount;
-                    skip += msgCount;
-                    if (msgCount > 1) {
-                        aByteBufferForRead.position(aByteBufferForRead.position()
-                                + Math.min(aByteBufferForRead.remaining(), (msgCount - 1) * KEY_A_BYTE_LENGTH));
-                    }
-                    bodyByteBufferForRead.position(bodyByteBufferForRead.position()
-                            + Math.min(bodyByteBufferForRead.remaining(), msgCount * BODY_BYTE_LENGTH));
-                    break;
-                }
-                if (a >= aMin) {
+//                if (a > aMax) {
+//                    offset += msgCount;
+//                    skip += msgCount;
+//                    if (msgCount > 1) {
+//                        aByteBufferForRead.position(aByteBufferForRead.position()
+//                                + Math.min(aByteBufferForRead.remaining(), (msgCount - 1) * KEY_A_BYTE_LENGTH));
+//                    }
+//                    bodyByteBufferForRead.position(bodyByteBufferForRead.position()
+//                            + Math.min(bodyByteBufferForRead.remaining(), msgCount * BODY_BYTE_LENGTH));
+//                    break;
+//                }
+//                if (a >= aMin) {
+                if (a >= aMin && a <= aMax) {
                     if (!bodyByteBufferForRead.hasRemaining()) {
                         fillReadBodyBuffer(bodyByteBufferForRead, offset);
                     }
@@ -454,16 +455,17 @@ public class LsmMessageStoreImpl extends MessageStore {
                     fillReadABuffer(aByteBufferForRead, offset);
                 }
                 long a = aByteBufferForRead.getLong();
-                if (a > aMax) {
-                    offset += msgCount;
-                    skip += msgCount;
-                    if (msgCount > 1) {
-                        aByteBufferForRead.position(aByteBufferForRead.position()
-                                + Math.min(aByteBufferForRead.remaining(), (msgCount - 1) * KEY_A_BYTE_LENGTH));
-                    }
-                    break;
-                }
-                if (a >= aMin) {
+//                if (a > aMax) {
+//                    offset += msgCount;
+//                    skip += msgCount;
+//                    if (msgCount > 1) {
+//                        aByteBufferForRead.position(aByteBufferForRead.position()
+//                                + Math.min(aByteBufferForRead.remaining(), (msgCount - 1) * KEY_A_BYTE_LENGTH));
+//                    }
+//                    break;
+//                }
+//                if (a >= aMin) {
+                if (a >= aMin && a <= aMax) {
                     sum += a;
                     count++;
                 } else {

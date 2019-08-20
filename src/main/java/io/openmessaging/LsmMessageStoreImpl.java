@@ -139,10 +139,10 @@ public class LsmMessageStoreImpl extends MessageStore {
             long finalCurrentMinT = currentMinT;
 
             Collection<Message> frozenMemTable;
-//            synchronized (this) {
+            synchronized (this) {
                 frozenMemTable = memTable;
                 memTable = createMemTable();
-//            }
+            }
 
             persistThreadPool.execute(() -> {
                 try {

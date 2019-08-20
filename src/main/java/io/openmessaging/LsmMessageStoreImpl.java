@@ -28,7 +28,7 @@ public class LsmMessageStoreImpl extends MessageStore {
     private static final int MAX_MEM_TABLE_SIZE = 20 * 10000;
     private static final int PERSIST_BUFFER_SIZE = 4 * 1024 * 1024;
 
-    private static final int DATA_SEGMENT_SIZE = 100 * 1000 * 1000;
+    private static final int DATA_SEGMENT_SIZE = 10 * 1000 * 1000;
 //    private static final int DATA_SEGMENT_SIZE = 99 * 1000;
 
     private static final int T_INDEX_SIZE = 1200 * 1024 * 1024;
@@ -38,7 +38,7 @@ public class LsmMessageStoreImpl extends MessageStore {
     private static final int READ_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 1024;
 
     private static final int WRITE_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 1024;
-    private static final int READ_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 10240;
+    private static final int READ_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 1024;
 
     private static final int PERSIST_SAMPLE_RATE = 100;
     private static final int PUT_SAMPLE_RATE = 10000000;
@@ -104,6 +104,8 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     private AtomicInteger threadIdCounter = new AtomicInteger(0);
     private ThreadLocal<Integer> threadId = ThreadLocal.withInitial(() -> threadIdCounter.getAndIncrement());
+
+//    private Map<Integer, >
 
     @Override
     public void put(Message message) {
@@ -326,16 +328,19 @@ public class LsmMessageStoreImpl extends MessageStore {
 
 //            verifyData();
             persistDone = true;
-
             persistThreadPool.shutdown();
+            persistBuffer1 = null;
+            persistBuffer2 = null;
+            System.gc();
+
             logger.info("Flushed all memTables, msg count1: " + putCounter.get()
                     + ", msg count2: " + tIndexCounter
                     + ", persist buffer index: " + persistBufferIndex
                     + ", max buffer index: " + maxBufferIndex
                     + ", time: " + (System.currentTimeMillis() - getStart));
-            if (putCounter.get() != tIndexCounter) {
-                throw new RuntimeException("Inc: " + (putCounter.get() - tIndexCounter));
-            }
+//            if (putCounter.get() != tIndexCounter) {
+//                throw new RuntimeException("Inc: " + (putCounter.get() - tIndexCounter));
+//            }
         }
         while (!persistDone) {
 //            logger.info("Waiting for all persist tasks to finish");

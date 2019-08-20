@@ -283,7 +283,7 @@ public class LsmMessageStoreImpl extends MessageStore {
                     + ", buffer index: " + persistBufferIndex
                     + ", sort count: " + sortCount
                     + ", sort times: " + sortTimes
-                    + ", avg sort num: " + sortCount / sortTimes
+                    + ", avg sort num: " + (sortTimes > 0 ? sortCount / sortTimes : 0)
                     + ", time: " + (System.currentTimeMillis() - persistStart) + ", persistId: " + persistId);
         }
     }

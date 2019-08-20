@@ -9,6 +9,7 @@ import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.util.*;
+import java.util.concurrent.ConcurrentSkipListSet;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -111,9 +112,9 @@ public class LsmMessageStoreImpl extends MessageStore {
         if (IS_TEST_RUN && putId == 0) {
             _putStart = System.currentTimeMillis();
         }
-        if (IS_TEST_RUN && putId == 20000 * 10000) {
-            throw new RuntimeException("" + (System.currentTimeMillis() - _putStart));
-        }
+//        if (IS_TEST_RUN && putId == 20000 * 10000) {
+//            throw new RuntimeException("" + (System.currentTimeMillis() - _putStart));
+//        }
 //        if (putId % PUT_SAMPLE_RATE == 0) {
 //            logger.info("Before add, time: " + (System.nanoTime() - putStart));
 //        }
@@ -138,10 +139,10 @@ public class LsmMessageStoreImpl extends MessageStore {
             long finalCurrentMinT = currentMinT;
 
             Collection<Message> frozenMemTable;
-            synchronized (this) {
+//            synchronized (this) {
                 frozenMemTable = memTable;
                 memTable = createMemTable();
-            }
+//            }
 
             persistThreadPool.execute(() -> {
                 try {
@@ -154,9 +155,9 @@ public class LsmMessageStoreImpl extends MessageStore {
 //            logger.info("Submitted memTable persist task, time: "
 //                    + (System.currentTimeMillis() - putStart) + ", putId: " + putId);
         }
-//        if (putId % PUT_SAMPLE_RATE == 0) {
-//            logger.info("Done put, time: " + (System.nanoTime() - putStart));
-//        }
+        if (putId % PUT_SAMPLE_RATE == 0) {
+            logger.info("Done put, time: " + (System.nanoTime() - putStart));
+        }
     }
 
     private Collection<Message> createMemTable() {
@@ -178,6 +179,9 @@ public class LsmMessageStoreImpl extends MessageStore {
             logger.info("Start persisting memTable with size: " + frozenMemTable.size()
                     + ", buffer index: " + persistBufferIndex + ", persistId: " + persistId);
         }
+
+        int sortCount = 0;
+        int sortTimes = 0;
 
         Message[] sourceBuffer = persistId % 2 == 0? persistBuffer1 : persistBuffer2;
         Message[] targetBuffer = persistId % 2 == 1? persistBuffer1 : persistBuffer2;
@@ -237,6 +241,8 @@ public class LsmMessageStoreImpl extends MessageStore {
                 // sort by a
                 if (msgCount > 1) {
                     msgBuffer.sort(Comparator.comparingLong(Message::getA));
+                    sortCount += msgCount;
+                    sortTimes++;
                 }
 
                 // store a and body
@@ -245,7 +251,8 @@ public class LsmMessageStoreImpl extends MessageStore {
                         if (curDataFile != null) {
                             curDataFile.flushABuffer();
                             curDataFile.flushBodyBuffer();
-                            logger.info("Flushed data file with start " + curDataFile.start + " at offset: " + tIndexCounter);
+                            logger.info("Flushed data file with start " + curDataFile.start
+                                    + " at offset: " + tIndexCounter);
                         }
                         curDataFile = dataFileList.get(tIndexCounter / DATA_SEGMENT_SIZE);
                     }
@@ -274,6 +281,9 @@ public class LsmMessageStoreImpl extends MessageStore {
         if (persistId % PERSIST_SAMPLE_RATE == 0) {
             logger.info("Done persisting memTable with size: " + frozenMemTable.size()
                     + ", buffer index: " + persistBufferIndex
+                    + ", sort count: " + sortCount
+                    + ", sort times: " + sortTimes
+                    + ", avg sort num: " + sortCount / sortTimes
                     + ", time: " + (System.currentTimeMillis() - persistStart) + ", persistId: " + persistId);
         }
     }

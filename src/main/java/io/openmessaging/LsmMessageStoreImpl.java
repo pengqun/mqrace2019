@@ -28,7 +28,7 @@ public class LsmMessageStoreImpl extends MessageStore {
     private static final int MAX_MEM_TABLE_SIZE = 20 * 10000;
     private static final int PERSIST_BUFFER_SIZE = 4 * 1024 * 1024;
 
-    private static final int DATA_SEGMENT_SIZE = 5 * 1000 * 1000;
+    private static final int DATA_SEGMENT_SIZE = 10 * 1000 * 1000;
 //    private static final int DATA_SEGMENT_SIZE = 99 * 1000;
 
     private static final int T_INDEX_SIZE = 1200 * 1024 * 1024;

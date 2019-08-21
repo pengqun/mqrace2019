@@ -268,9 +268,11 @@ public class LsmMessageStoreImpl extends MessageStore {
                 msgBuffer.clear();
 
                 // update t index summary
-                tDiff = (int) (t - tBase);
-                if (tDiff > 0 && tDiff % T_INDEX_SUMMARY_FACTOR == 0) {
-                    tIndexSummary[(tDiff / T_INDEX_SUMMARY_FACTOR)] = tIndexCounter;
+                if (t < T_UPPER_LIMIT) {
+                    tDiff = (int) (t - tBase);
+                    if (tDiff % T_INDEX_SUMMARY_FACTOR == 0) {
+                        tIndexSummary[(tDiff / T_INDEX_SUMMARY_FACTOR)] = tIndexCounter;
+                    }
                 }
             }
 

@@ -9,10 +9,7 @@ import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.util.*;
-import java.util.concurrent.ConcurrentSkipListSet;
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -25,8 +22,10 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     private static final Logger logger = Logger.getLogger(LsmMessageStoreImpl.class);
 
+    // Assumptions
     private static final long T_UPPER_LIMIT = Long.MAX_VALUE;
     private static final long A_UPPER_LIMIT = Long.MAX_VALUE;
+    private static final int MSG_COUNT_UPPER_LIMIT = Integer.MAX_VALUE;
 
     private static final int MAX_MEM_TABLE_SIZE = 20 * 10000;
     private static final int PERSIST_BUFFER_SIZE = 4 * 1024 * 1024;
@@ -34,6 +33,7 @@ public class LsmMessageStoreImpl extends MessageStore {
     private static final int DATA_SEGMENT_SIZE = 5 * 1000 * 1000;
 //    private static final int DATA_SEGMENT_SIZE = 99 * 1000;
 
+    // TODO split into multiple indexes
     private static final int T_INDEX_SIZE = 1200 * 1024 * 1024;
     private static final int T_INDEX_SUMMARY_FACTOR = 32;
 
@@ -53,35 +53,16 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     static {
         logger.info("LsmMessageStoreImpl load start");
-        for (int i = 0; i <= Integer.MAX_VALUE / DATA_SEGMENT_SIZE; i++) {
-//        for (int i = 0; i <= 200 * 10000 / DATA_SEGMENT_SIZE; i++) {
-            DataFile dataFile = new DataFile();
-            try {
-                dataFile.aFile = new RandomAccessFile(Constants.DATA_DIR + "a" + i + ".data", "rw");
-                dataFile.bodyFile = new RandomAccessFile(Constants.DATA_DIR + "body" + i + ".data", "rw");
-            } catch (FileNotFoundException e) {
-                e.printStackTrace();
-            }
-            dataFile.aChannel = dataFile.aFile.getChannel();
-            dataFile.bodyChannel = dataFile.bodyFile.getChannel();
-            dataFile.start = i * DATA_SEGMENT_SIZE;
-            dataFile.end = (i + 1) * DATA_SEGMENT_SIZE - 1;
-            if (dataFile.end < 0) {
-                dataFile.end = Integer.MAX_VALUE;
-            }
-            dataFileList.add(dataFile);
-            logger.info("Created data file: [" + dataFile.start + ", " + dataFile.end + "]");
-        }
-        logger.info("LsmMessageStoreImpl load end");
+//        logger.info("LsmMessageStoreImpl load end");
     }
 
-    private ThreadPoolExecutor persistThreadPool = new ThreadPoolExecutor(
-            1, 1, 0L, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>());
+    private ThreadPoolExecutor persistThreadPool = (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
 
     private AtomicInteger putCounter = new AtomicInteger(0);
-    private AtomicInteger persistCounter = new AtomicInteger(0);
     private AtomicInteger getCounter = new AtomicInteger(0);
     private AtomicInteger avgCounter = new AtomicInteger(0);
+    private int persistCounter = 0;
+    private int dataFileCounter = 0;
 
     private volatile Collection<Message> memTable = createMemTable();
     private Message[] persistBuffer1 = new Message[PERSIST_BUFFER_SIZE];
@@ -179,7 +160,7 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     private void persistMemTable(Collection<Message> frozenMemTable, long currentMinT) {
         long persistStart = System.currentTimeMillis();
-        int persistId = persistCounter.getAndIncrement();
+        int persistId = persistCounter++;
         if (persistId % PERSIST_SAMPLE_RATE == 0) {
             logger.info("Start persisting memTable with size: " + frozenMemTable.size()
                     + ", buffer index: " + persistBufferIndex + ", persistId: " + persistId);
@@ -256,10 +237,9 @@ public class LsmMessageStoreImpl extends MessageStore {
                         if (curDataFile != null) {
                             curDataFile.flushABuffer();
                             curDataFile.flushBodyBuffer();
-                            logger.info("Flushed data file with start " + curDataFile.start
-                                    + " at offset: " + tIndexCounter);
+                            logger.info("Flushed data file " + curDataFile.index + " at offset: " + tIndexCounter);
                         }
-                        curDataFile = dataFileList.get(tIndexCounter / DATA_SEGMENT_SIZE);
+                        curDataFile = newDataFile(tIndexCounter, tIndexCounter + DATA_SEGMENT_SIZE - 1);
                     }
                     curDataFile.writeA(message.getA());
                     curDataFile.writeBody(message.getBody());
@@ -321,7 +301,7 @@ public class LsmMessageStoreImpl extends MessageStore {
             while (persistThreadPool.getActiveCount() + persistThreadPool.getQueue().size() > 0) {
                 logger.info("Waiting for previous persist tasks to finish");
                 try {
-                    Thread.sleep(50);
+                    Thread.sleep(10);
                 } catch (InterruptedException e) {
                     e.printStackTrace();
                 }
@@ -565,7 +545,31 @@ public class LsmMessageStoreImpl extends MessageStore {
         }
     }
 
+    private DataFile newDataFile(int start, int end) {
+        DataFile dataFile = new DataFile();
+        dataFile.index = dataFileCounter++;
+        try {
+            dataFile.aFile = new RandomAccessFile(
+                    Constants.DATA_DIR + "a" + dataFile.index + ".data", "rw");
+            dataFile.bodyFile = new RandomAccessFile(
+                    Constants.DATA_DIR + "body" + dataFile.index + ".data", "rw");
+        } catch (FileNotFoundException e) {
+            e.printStackTrace();
+        }
+        dataFile.aChannel = dataFile.aFile.getChannel();
+        dataFile.bodyChannel = dataFile.bodyFile.getChannel();
+        dataFile.start = start;
+        dataFile.end = end;
+        if (dataFile.end < 0) {
+            dataFile.end = MSG_COUNT_UPPER_LIMIT;
+        }
+        dataFileList.add(dataFile);
+        logger.info("Created data file: [" + dataFile.start + ", " + dataFile.end + "]");
+        return dataFile;
+    }
+
     private static class DataFile {
+        int index;
         int start;
         int end;
         RandomAccessFile aFile;

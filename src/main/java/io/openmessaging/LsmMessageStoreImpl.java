@@ -27,10 +27,10 @@ public class LsmMessageStoreImpl extends MessageStore {
     private static final long A_UPPER_LIMIT = Long.MAX_VALUE;
     private static final int MSG_COUNT_UPPER_LIMIT = Integer.MAX_VALUE;
 
-    private static final int MAX_MEM_TABLE_SIZE = 20 * 10000;
+    private static final int MAX_MEM_TABLE_SIZE = 128 * 1024;
     private static final int PERSIST_BUFFER_SIZE = 4 * 1024 * 1024;
 
-    private static final int DATA_SEGMENT_SIZE = 5 * 1000 * 1000;
+    private static final int DATA_SEGMENT_SIZE = 5 * 1024 * 1024;
 //    private static final int DATA_SEGMENT_SIZE = 99 * 1000;
 
     // TODO split into multiple indexes
@@ -141,9 +141,9 @@ public class LsmMessageStoreImpl extends MessageStore {
 //            logger.info("Submitted memTable persist task, time: "
 //                    + (System.currentTimeMillis() - putStart) + ", putId: " + putId);
         }
-        if (putId % PUT_SAMPLE_RATE == 0) {
-            logger.info("Done put, time: " + (System.nanoTime() - putStart));
-        }
+//        if (putId % PUT_SAMPLE_RATE == 0) {
+//            logger.info("Done put, time: " + (System.nanoTime() - putStart));
+//        }
     }
 
     private Collection<Message> createMemTable() {
@@ -237,7 +237,7 @@ public class LsmMessageStoreImpl extends MessageStore {
                         if (curDataFile != null) {
                             curDataFile.flushABuffer();
                             curDataFile.flushBodyBuffer();
-                            logger.info("Flushed data file " + curDataFile.index + " at offset: " + tIndexCounter);
+//                            logger.info("Flushed data file " + curDataFile.index + " at offset: " + tIndexCounter);
                         }
                         curDataFile = newDataFile(tIndexCounter, tIndexCounter + DATA_SEGMENT_SIZE - 1);
                     }
@@ -297,20 +297,20 @@ public class LsmMessageStoreImpl extends MessageStore {
                     + ", aMin: " + aMin + ", aMax: " + aMax + ", getId: " + getId);
         }
         if (getId == 0) {
-            logger.info("Flush all memTables before getMessage");
+            logger.info("Waiting for previous persist tasks");
             while (persistThreadPool.getActiveCount() + persistThreadPool.getQueue().size() > 0) {
-                logger.info("Waiting for previous persist tasks to finish");
                 try {
                     Thread.sleep(10);
                 } catch (InterruptedException e) {
                     e.printStackTrace();
                 }
             }
+            logger.info("Flush last mem table");
             persistMemTable(memTable, T_UPPER_LIMIT);
 
             curDataFile.flushABuffer();
             curDataFile.flushBodyBuffer();
-            logger.info("Flushed data file with start " + curDataFile.start + " at end");
+//            logger.info("Flushed data file with start " + curDataFile.start + " at end");
 
 //            verifyData();
             persistDone = true;
@@ -403,35 +403,35 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     @Override
     public long getAvgValue(long aMin, long aMax, long tMin, long tMax) {
-        long avgStart = System.currentTimeMillis();
-        int avgId = avgCounter.getAndIncrement();
-        if (IS_TEST_RUN && avgId == 0) {
-            _getEnd = System.currentTimeMillis();
-            _avgStart = _getEnd;
-        }
-        if (avgId % AVG_SAMPLE_RATE == 0) {
-            logger.info("getAvgValue - tMin: " + tMin + ", tMax: " + tMax
-                    + ", aMin: " + aMin + ", aMax: " + aMax + ", avgId: " + avgId);
-            if (IS_TEST_RUN && avgId == TEST_BOUNDARY) {
-                long putDuration = _putEnd - _putStart;
-                long getDuration = _getEnd - _getStart;
-                long avgDuration = System.currentTimeMillis() - _avgStart;
-                int putScore = (int) (putCounter.get() / putDuration);
-                int getScore = (int) (getMsgCounter.get() / getDuration);
-                int avgScore = (int) (avgMsgCounter.get() / avgDuration);
-                int totalScore = putScore + getScore + avgScore;
-                logger.info("Test result: \n"
-                        + "\tput: " + putCounter.get() + " / " + putDuration + "ms = " + putScore + "\n"
-                        + "\tget: " + getMsgCounter.get() + " / " + getDuration + "ms = " + getScore + "\n"
-                        + "\tavg: " + avgMsgCounter.get() + " / " + avgDuration + "ms = " + avgScore + "\n"
-                        + "\ttotal: " + totalScore + "\n"
-                );
-                throw new RuntimeException(putScore + "/" + getScore + "/" + avgScore);
-            }
-        }
+//        long avgStart = System.currentTimeMillis();
+//        int avgId = avgCounter.getAndIncrement();
+//        if (IS_TEST_RUN && avgId == 0) {
+//            _getEnd = System.currentTimeMillis();
+//            _avgStart = _getEnd;
+//        }
+//        if (avgId % AVG_SAMPLE_RATE == 0) {
+//            logger.info("getAvgValue - tMin: " + tMin + ", tMax: " + tMax
+//                    + ", aMin: " + aMin + ", aMax: " + aMax + ", avgId: " + avgId);
+//            if (IS_TEST_RUN && avgId == TEST_BOUNDARY) {
+//                long putDuration = _putEnd - _putStart;
+//                long getDuration = _getEnd - _getStart;
+//                long avgDuration = System.currentTimeMillis() - _avgStart;
+//                int putScore = (int) (putCounter.get() / putDuration);
+//                int getScore = (int) (getMsgCounter.get() / getDuration);
+//                int avgScore = (int) (avgMsgCounter.get() / avgDuration);
+//                int totalScore = putScore + getScore + avgScore;
+//                logger.info("Test result: \n"
+//                        + "\tput: " + putCounter.get() + " / " + putDuration + "ms = " + putScore + "\n"
+//                        + "\tget: " + getMsgCounter.get() + " / " + getDuration + "ms = " + getScore + "\n"
+//                        + "\tavg: " + avgMsgCounter.get() + " / " + avgDuration + "ms = " + avgScore + "\n"
+//                        + "\ttotal: " + totalScore + "\n"
+//                );
+//                throw new RuntimeException(putScore + "/" + getScore + "/" + avgScore);
+//            }
+//        }
         long sum = 0;
         int count = 0;
-        long skip = 0;
+//        long skip = 0;
 
         ByteBuffer aByteBufferForRead = threadBufferForReadA.get();
         aByteBufferForRead.flip();
@@ -459,23 +459,23 @@ public class LsmMessageStoreImpl extends MessageStore {
                 if (a >= aMin && a <= aMax) {
                     sum += a;
                     count++;
-                } else {
-                    skip++;
                 }
-
+//                else {
+//                    skip++;
+//                }
                 offset++;
                 msgCount--;
             }
         }
         aByteBufferForRead.clear();
 
-        if (avgId % AVG_SAMPLE_RATE == 0) {
-            logger.info("Got " + count + ", skip: " + skip
-                    + ", time: " + (System.currentTimeMillis() - avgStart));
-        }
-        if (IS_TEST_RUN) {
-            avgMsgCounter.addAndGet(count);
-        }
+//        if (avgId % AVG_SAMPLE_RATE == 0) {
+//            logger.info("Got " + count + ", skip: " + skip
+//                    + ", time: " + (System.currentTimeMillis() - avgStart));
+//        }
+//        if (IS_TEST_RUN) {
+//            avgMsgCounter.addAndGet(count);
+//        }
         return count == 0 ? 0 : sum / count;
     }
 
@@ -564,7 +564,7 @@ public class LsmMessageStoreImpl extends MessageStore {
             dataFile.end = MSG_COUNT_UPPER_LIMIT;
         }
         dataFileList.add(dataFile);
-        logger.info("Created data file: [" + dataFile.start + ", " + dataFile.end + "]");
+//        logger.info("Created data file: [" + dataFile.start + ", " + dataFile.end + "]");
         return dataFile;
     }
 

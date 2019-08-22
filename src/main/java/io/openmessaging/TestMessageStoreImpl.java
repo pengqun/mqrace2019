@@ -77,9 +77,9 @@ public class TestMessageStoreImpl extends MessageStore {
         _tMin = Math.min(t, _tMin);
         _tMax = Math.max(t, _tMax);
 
-        long diff = a - t;
-        minDiff = Math.min(diff, minDiff);
-        maxDiff = Math.max(diff, maxDiff);
+//        long diff = a - t;
+//        minDiff = Math.min(diff, minDiff);
+//        maxDiff = Math.max(diff, maxDiff);
 //        if (diff > 0) {
 //            totalPosDiff += diff;
 //            posDiffCount++;
@@ -138,7 +138,7 @@ public class TestMessageStoreImpl extends MessageStore {
 
         logger.info("getMessage: _aMin - " + _aMin + ", _aMax - " + _aMax
                 + ", _tMin - " + _tMin + ", _tMax - " + _tMax + ", totalCount = " + totalCount
-                + ", minDiff - " + minDiff + ", maxDiff - " + maxDiff
+//                + ", minDiff - " + minDiff + ", maxDiff - " + maxDiff
 //                + ", posDiffCount - " + posDiffCount + ", negDiffCount - " + negDiffCount
 //                + ", avgPosDiff - " + (posDiffCount > 0 ? totalPosDiff / posDiffCount : 0)
 //                + ", avgNegDiff - " + (negDiffCount > 0 ? totalNegDiff / negDiffCount : 0)

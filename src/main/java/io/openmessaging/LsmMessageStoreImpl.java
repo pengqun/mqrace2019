@@ -30,7 +30,7 @@ public class LsmMessageStoreImpl extends MessageStore {
     private static final int MAX_MEM_TABLE_SIZE = 128 * 1024;
     private static final int PERSIST_BUFFER_SIZE = 4 * 1024 * 1024;
 
-    private static final int DATA_SEGMENT_SIZE = 1024 * 1024;
+    private static final int DATA_SEGMENT_SIZE = 256 * 1024;
 //    private static final int DATA_SEGMENT_SIZE = 99 * 1000;
 
     // TODO split into multiple indexes
@@ -38,10 +38,10 @@ public class LsmMessageStoreImpl extends MessageStore {
     private static final int T_INDEX_SUMMARY_FACTOR = 32;
 
     private static final int WRITE_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 1024;
-    private static final int READ_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 1024 * 16;
+    private static final int READ_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 1024 * 64;
 
     private static final int WRITE_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 1024;
-    private static final int READ_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 1024;
+    private static final int READ_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 1024 * 4;
 
     private static final int PERSIST_SAMPLE_RATE = 100;
     private static final int PUT_SAMPLE_RATE = 10000000;

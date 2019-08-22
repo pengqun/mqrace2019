@@ -30,7 +30,7 @@ public class LsmMessageStoreImpl extends MessageStore {
     private static final int MAX_MEM_TABLE_SIZE = 128 * 1024;
     private static final int PERSIST_BUFFER_SIZE = 4 * 1024 * 1024;
 
-    private static final int DATA_SEGMENT_SIZE = 5 * 1024 * 1024;
+    private static final int DATA_SEGMENT_SIZE = 1024 * 1024;
 //    private static final int DATA_SEGMENT_SIZE = 99 * 1000;
 
     // TODO split into multiple indexes
@@ -38,7 +38,7 @@ public class LsmMessageStoreImpl extends MessageStore {
     private static final int T_INDEX_SUMMARY_FACTOR = 32;
 
     private static final int WRITE_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 1024;
-    private static final int READ_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 8192;
+    private static final int READ_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 1024 * 16;
 
     private static final int WRITE_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 1024;
     private static final int READ_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 1024;
@@ -76,7 +76,6 @@ public class LsmMessageStoreImpl extends MessageStore {
     private int tIndexCounter = 0;
     private long tBase = -1;
 
-//    private long tMaximum = Long.MIN_VALUE;
     private long maxBufferIndex = Long.MIN_VALUE;
 
     private Message sentinelMessage = new Message(T_UPPER_LIMIT, A_UPPER_LIMIT, null);
@@ -166,9 +165,6 @@ public class LsmMessageStoreImpl extends MessageStore {
                     + ", buffer index: " + persistBufferIndex + ", persistId: " + persistId);
         }
 
-//        int sortCount = 0;
-//        int sortTimes = 0;
-
         Message[] sourceBuffer = persistId % 2 == 0? persistBuffer1 : persistBuffer2;
         Message[] targetBuffer = persistId % 2 == 1? persistBuffer1 : persistBuffer2;
 
@@ -201,8 +197,6 @@ public class LsmMessageStoreImpl extends MessageStore {
             logger.info("[WARN] persistBufferIndex is 0, skipped");
             return;
         }
-
-//        tMaximum = Math.max(tMaximum, targetBuffer[0].getT());
 
         int index = persistBufferIndex - 1;
         long lastT = targetBuffer[index].getT();
@@ -269,9 +263,6 @@ public class LsmMessageStoreImpl extends MessageStore {
         if (persistId % PERSIST_SAMPLE_RATE == 0) {
             logger.info("Done persisting memTable with size: " + frozenMemTable.size()
                     + ", buffer index: " + persistBufferIndex
-//                    + ", sort count: " + sortCount
-//                    + ", sort times: " + sortTimes
-//                    + ", avg sort num: " + (sortTimes > 0 ? sortCount / sortTimes : 0)
                     + ", time: " + (System.currentTimeMillis() - persistStart) + ", persistId: " + persistId);
         }
     }

@@ -27,10 +27,10 @@ public class LsmMessageStoreImpl extends MessageStore {
     private static final long A_UPPER_LIMIT = Long.MAX_VALUE;
     private static final int MSG_COUNT_UPPER_LIMIT = Integer.MAX_VALUE;
 
-    private static final int MAX_MEM_TABLE_SIZE = 5 * 1024 * 1024;
+    private static final int MAX_MEM_TABLE_SIZE = 128 * 1024;
     private static final int PERSIST_BUFFER_SIZE = 4 * 1024 * 1024;
 
-    private static final int DATA_SEGMENT_SIZE = 256 * 1024;
+    private static final int DATA_SEGMENT_SIZE = 5 * 1024 * 1024;
 //    private static final int DATA_SEGMENT_SIZE = 99 * 1000;
 
     private static final int MAX_CACHE_SIZE = 1024 * 1024;

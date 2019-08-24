@@ -3,13 +3,14 @@ package io.openmessaging;
 import java.util.List;
 
 /**
- * My implementation
+ * Entry
  */
 public class DefaultMessageStoreImpl extends MessageStore {
 
 //    private MessageStore myMessageStore = new SampleMessageStoreImpl();
 //    private MessageStore myMessageStore = new TestMessageStoreImpl();
     private MessageStore myMessageStore = new LsmMessageStoreImpl();
+//    private MessageStore myMessageStore = new MyMessageStoreImpl();
 
     @Override
     public void put(Message message) {

@@ -9,15 +9,18 @@ import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.util.ArrayList;
-import java.util.Collection;
+import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
-import java.util.TreeSet;
-import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Collectors;
 
-import static io.openmessaging.Constants.*;
+import static io.openmessaging.Constants.IS_TEST_RUN;
+import static io.openmessaging.Constants.TEST_BOUNDARY;
 
 /**
  * @author .ignore 2019-07-29
@@ -26,258 +29,99 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     private static final Logger logger = Logger.getLogger(LsmMessageStoreImpl.class);
 
-    // Assumptions
-    private static final long T_UPPER_LIMIT = Long.MAX_VALUE;
-    private static final long A_UPPER_LIMIT = Long.MAX_VALUE;
-    private static final int MSG_COUNT_UPPER_LIMIT = Integer.MAX_VALUE;
+    private static final int SST_FILE_INDEX_RATE = 32;
 
-    private static final int MAX_MEM_TABLE_SIZE = 128 * 1024;
-    private static final int PERSIST_BUFFER_SIZE = 4 * 1024 * 1024;
-
-    private static final int DATA_SEGMENT_SIZE = 4 * 1024 * 1024;
-//    private static final int DATA_SEGMENT_SIZE = 99 * 1000;
-
-    // TODO split into multiple indexes
-    private static final int T_INDEX_SIZE = 1200 * 1024 * 1024;
-    private static final int T_INDEX_SUMMARY_FACTOR = 32;
-
-    private static final int WRITE_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 1024;
-    private static final int READ_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 1024 * 8;
-
-    private static final int WRITE_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 1024;
-    private static final int READ_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 1024;
+    private static final int WRITE_BUFFER_SIZE = Constants.MSG_BYTE_LENGTH * 1024;
+    private static final int READ_BUFFER_SIZE = Constants.MSG_BYTE_LENGTH * 1024;
+    private static final int WRITE_TA_BUFFER_SIZE = Constants.TA_BYTE_LENGTH * 1024;
+    private static final int READ_TA_BUFFER_SIZE = Constants.TA_BYTE_LENGTH * 1024;
 
     private static final int PERSIST_SAMPLE_RATE = 100;
     private static final int PUT_SAMPLE_RATE = 10000000;
     private static final int GET_SAMPLE_RATE = 1000;
     private static final int AVG_SAMPLE_RATE = 1000;
 
-    private static List<DataFile> dataFileList = new ArrayList<>();
-    private static DataFile curDataFile = null;
-
-    private static ByteBuffer aBufferForWrite = ByteBuffer.allocateDirect(WRITE_A_BUFFER_SIZE);
-    private static ByteBuffer bodyBufferForWrite = ByteBuffer.allocateDirect(WRITE_BODY_BUFFER_SIZE);
-
     static {
-        logger.info("LsmMessageStoreImpl load start");
-//        logger.info("LsmMessageStoreImpl load end");
+        logger.info("LsmMessageStoreImpl loaded");
     }
 
-    private ThreadPoolExecutor persistThreadPool = (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
+    private static final int RING_BUFFER_SIZE = 10000000;
+    private static final int PERSIST_SEGMENT_SIZE = 100000;
+
+//    private volatile NavigableMap<Long, Message> memTable = new TreeMap<>();
+//    private volatile NavigableMap<Long, Message> memTable = new ConcurrentSkipListMap<>();
+    private Message[] ringBuffer = new Message[RING_BUFFER_SIZE];
+
+    private ThreadPoolExecutor persistThreadPool = new ThreadPoolExecutor(1, 1,
+            0L, TimeUnit.MILLISECONDS,
+            new LinkedBlockingQueue<>());
 
     private AtomicInteger putCounter = new AtomicInteger(0);
-    private AtomicInteger getCounter = new AtomicInteger(0);
-    private AtomicInteger avgCounter = new AtomicInteger(0);
-    private int persistCounter = 0;
-    private int dataFileCounter = 0;
-
-    private volatile Collection<Message> memTable = createMemTable();
-    private Message[] persistBuffer1 = new Message[PERSIST_BUFFER_SIZE];
-    private Message[] persistBuffer2 = new Message[PERSIST_BUFFER_SIZE];
-    private int persistBufferIndex = 0;
+    private AtomicInteger fileCounter = new AtomicInteger(0);
     private volatile boolean persistDone = false;
 
-    private short[] tIndex = new short[T_INDEX_SIZE];
-    private int[] tIndexSummary = new int[T_INDEX_SIZE / T_INDEX_SUMMARY_FACTOR];
-    private long[] tCurrent = new long[PRODUCER_THREAD_NUM];
-    private int tIndexCounter = 0;
-    private long tBase = -1;
+    private AtomicInteger writeCounter = new AtomicInteger(0);
 
-    private long maxBufferIndex = Long.MIN_VALUE;
+    private AtomicInteger getCounter = new AtomicInteger(0);
+    private AtomicInteger avgCounter = new AtomicInteger(0);
 
-    private Message sentinelMessage = new Message(T_UPPER_LIMIT, A_UPPER_LIMIT, null);
+    private List<SSTableFile> ssTableFileList = new ArrayList<>();
+    private List<SSTableFile> ssTableFileListTa = new ArrayList<>();
 
-    private ThreadLocal<ByteBuffer> threadBufferForReadA = ThreadLocal.withInitial(()
-            -> ByteBuffer.allocateDirect(READ_A_BUFFER_SIZE));
-    private ThreadLocal<ByteBuffer> threadBufferForReadBody = ThreadLocal.withInitial(()
-            -> ByteBuffer.allocateDirect(READ_BODY_BUFFER_SIZE));
+    private ThreadLocal<ByteBuffer> threadBufferForMsg = ThreadLocal.withInitial(()
+            -> ByteBuffer.allocateDirect(READ_BUFFER_SIZE));
+    private ThreadLocal<ByteBuffer> threadBufferForMsgTa = ThreadLocal.withInitial(()
+            -> ByteBuffer.allocateDirect(READ_TA_BUFFER_SIZE));
 
-    private AtomicInteger threadIdCounter = new AtomicInteger(0);
-    private ThreadLocal<Integer> threadId = ThreadLocal.withInitial(() -> threadIdCounter.getAndIncrement());
+    private ThreadLocal<ByteBuffer> threadBufferForWrite = ThreadLocal.withInitial(()
+            -> ByteBuffer.allocateDirect(WRITE_BUFFER_SIZE));
+    private ThreadLocal<ByteBuffer> threadBufferForWriteTa = ThreadLocal.withInitial(()
+            -> ByteBuffer.allocateDirect(WRITE_TA_BUFFER_SIZE));
+
+    private AtomicLong getMsgCounter = new AtomicLong(0);
+    private AtomicLong avgMsgCounter = new AtomicLong(0);
+    private long _putStart = 0;
+    private long _putEnd = 0;
+    private long _getStart = 0;
+    private long _getEnd = 0;
+    private long _avgStart = 0;
 
     @Override
     public void put(Message message) {
-        long putStart = System.nanoTime();
+        long putStart = System.currentTimeMillis();
         int putId = putCounter.getAndIncrement();
         if (IS_TEST_RUN && putId == 0) {
             _putStart = System.currentTimeMillis();
         }
-//        if (IS_TEST_RUN && putId == 20000 * 10000) {
-//            throw new RuntimeException("" + (System.currentTimeMillis() - _putStart));
-//        }
-//        if (putId % PUT_SAMPLE_RATE == 0) {
-//            logger.info("Before add, time: " + (System.nanoTime() - putStart));
-//        }
-
-        synchronized (this) {
-            memTable.add(message);
+        if (IS_TEST_RUN && putId == 10000 * 10000) {
+            throw new RuntimeException("" + (System.currentTimeMillis() - _putStart));
         }
+        if (putId % PUT_SAMPLE_RATE == 0) {
+            logger.info("putMessage - t: " + message.getT() + ", a: " + message.getA() + ", putId: " + putId);
+        }
+
+        while (putId >= writeCounter.get() + RING_BUFFER_SIZE) {
+            logger.info("Waiting for buffer to be available");
+            try {
+                Thread.sleep(10);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        }
+
+        int index = putId % RING_BUFFER_SIZE;
+        ringBuffer[index] = message;
 
         if (putId % PUT_SAMPLE_RATE == 0) {
-            logger.info("Put message to memTable with t: " + message.getT() + ", a: " + message.getA()
-                    + ", time: " + (System.nanoTime() - putStart) + ", putId: " + putId);
+            logger.info("putMessage to buffer with index " + index + ", time: "
+                    + (System.currentTimeMillis() - putStart) + ", putId: " + putId);
         }
 
-        tCurrent[threadId.get()] = message.getT();
-
-        if ((putId + 1) % MAX_MEM_TABLE_SIZE == 0) {
-//            logger.info("Submit memTable persist task, putId: " + putId);
-            long currentMinT = tCurrent[0];
-            for (int i = 1; i < tCurrent.length; i++) {
-                currentMinT = Math.min(currentMinT, tCurrent[i]);
-            }
-            long finalCurrentMinT = currentMinT;
-
-            Collection<Message> frozenMemTable;
-            synchronized (this) {
-                frozenMemTable = memTable;
-                memTable = createMemTable();
-            }
-
-            persistThreadPool.execute(() -> {
-                try {
-                    persistMemTable(frozenMemTable, finalCurrentMinT);
-                } catch (Exception e) {
-                    logger.info("Failed to persist mem table", e);
-                    System.exit(-1);
-                }
-            });
-//            logger.info("Submitted memTable persist task, time: "
-//                    + (System.currentTimeMillis() - putStart) + ", putId: " + putId);
+        if (putId > 0 && index % PERSIST_SEGMENT_SIZE == 0) {
+            int start = (index + RING_BUFFER_SIZE - PERSIST_SEGMENT_SIZE) % RING_BUFFER_SIZE;
+            int end = start + PERSIST_SEGMENT_SIZE;
+            persistThreadPool.execute(() -> persistMemTable(start, end));
         }
-//        if (putId % PUT_SAMPLE_RATE == 0) {
-//            logger.info("Done put, time: " + (System.nanoTime() - putStart));
-//        }
-    }
-
-    private Collection<Message> createMemTable() {
-//        return new ConcurrentSkipListSet<>((m1, m2) -> {
-        return new TreeSet<>((m1, m2) -> {
-            if (m1.getT() == m2.getT()) {
-                //noinspection ComparatorMethodParameterNotUsed
-                return -1;
-            }
-            // Order by T desc
-            return m2.getT() < m1.getT() ? -1 : 1;
-        });
-    }
-
-    private void persistMemTable(Collection<Message> frozenMemTable, long currentMinT) {
-        long persistStart = System.currentTimeMillis();
-        int persistId = persistCounter++;
-        if (persistId % PERSIST_SAMPLE_RATE == 0) {
-            logger.info("Start persisting memTable with size: " + frozenMemTable.size()
-                    + ", buffer index: " + persistBufferIndex + ", persistId: " + persistId);
-        }
-
-        Message[] sourceBuffer = persistId % 2 == 0? persistBuffer1 : persistBuffer2;
-        Message[] targetBuffer = persistId % 2 == 1? persistBuffer1 : persistBuffer2;
-
-        int i = 0;
-        int j = 0;
-        for (Message message : frozenMemTable) {
-            while (i < persistBufferIndex && sourceBuffer[i].getT() >= message.getT()) {
-                targetBuffer[j++] = sourceBuffer[i++];
-            }
-            targetBuffer[j++] = message;
-        }
-
-        while (i < persistBufferIndex) {
-            targetBuffer[j++] = sourceBuffer[i++];
-        }
-        persistBufferIndex = j;
-        maxBufferIndex = Math.max(maxBufferIndex, persistBufferIndex);
-
-        if (persistId % PERSIST_SAMPLE_RATE == 0) {
-            logger.info("Copied memTable with size: " + frozenMemTable.size() + " to buffer with index: " + persistBufferIndex
-                    + ", time: " + (System.currentTimeMillis() - persistStart) + ", persistId: " + persistId);
-        }
-
-        if (tBase == -1) {
-            tBase = targetBuffer[persistBufferIndex - 1].getT();
-            logger.info("Determined T base: " + tBase);
-        }
-
-        if (persistBufferIndex == 0) {
-            logger.info("[WARN] persistBufferIndex is 0, skipped");
-            return;
-        }
-
-        int index = persistBufferIndex - 1;
-        long lastT = targetBuffer[index].getT();
-        List<Message> msgBuffer = new ArrayList<>();
-
-        while (true) {
-            Message msg = index >= 0 ? targetBuffer[index] : sentinelMessage;
-            long t = msg.getT();
-
-            if (t != lastT) {
-                int msgCount = msgBuffer.size();
-                int tDiff = (int) (lastT - tBase);
-
-                // update t index
-                if (msgCount < Short.MAX_VALUE) {
-                    tIndex[tDiff] = (short) msgCount;
-                } else {
-                    // TODO store overflowed count to additional map
-                    throw new RuntimeException("A count is larger than short max");
-                }
-
-//                // sort by a
-//                if (msgCount > 1) {
-//                    msgBuffer.sort(Comparator.comparingLong(Message::getA));
-//                    sortCount += msgCount;
-//                    sortTimes++;
-//                }
-
-                // store a and body
-                for (Message message : msgBuffer) {
-                    if (tIndexCounter % DATA_SEGMENT_SIZE == 0) {
-                        if (curDataFile != null) {
-                            curDataFile.flushABuffer();
-                            curDataFile.flushBodyBuffer();
-//                            logger.info("Flushed data file " + curDataFile.index + " at offset: " + tIndexCounter);
-                        }
-                        curDataFile = newDataFile(tIndexCounter, tIndexCounter + DATA_SEGMENT_SIZE - 1);
-                    }
-                    curDataFile.writeA(message.getA());
-                    curDataFile.writeBody(message.getBody());
-                    tIndexCounter++;
-                }
-                msgBuffer.clear();
-
-                // update t index summary
-                if (t < T_UPPER_LIMIT) {
-                    tDiff = (int) (t - tBase);
-                    if (tDiff % T_INDEX_SUMMARY_FACTOR == 0) {
-                        tIndexSummary[(tDiff / T_INDEX_SUMMARY_FACTOR)] = tIndexCounter;
-                    }
-                }
-            }
-
-            if (t >= currentMinT) {
-                break;
-            }
-
-            msgBuffer.add(msg);
-            lastT = t;
-            index--;
-        }
-        persistBufferIndex = index + 1;
-
-        if (persistId % PERSIST_SAMPLE_RATE == 0) {
-            logger.info("Done persisting memTable with size: " + frozenMemTable.size()
-                    + ", buffer index: " + persistBufferIndex
-                    + ", time: " + (System.currentTimeMillis() - persistStart) + ", persistId: " + persistId);
-        }
-    }
-
-    private long getOffsetByTDiff(int tDiff) {
-        long offset = tIndexSummary[tDiff / T_INDEX_SUMMARY_FACTOR];
-        for (int i = tDiff / T_INDEX_SUMMARY_FACTOR * T_INDEX_SUMMARY_FACTOR; i < tDiff; i++) {
-            offset += tIndex[i];
-        }
-        return offset;
     }
 
     @Override
@@ -293,41 +137,37 @@ public class LsmMessageStoreImpl extends MessageStore {
                     + ", aMin: " + aMin + ", aMax: " + aMax + ", getId: " + getId);
         }
         if (getId == 0) {
-            logger.info("Waiting for previous persist tasks");
+            logger.info("Flush all memTables before getMessage");
             while (persistThreadPool.getActiveCount() + persistThreadPool.getQueue().size() > 0) {
+                logger.info("Waiting for previous persist tasks to finish");
                 try {
                     Thread.sleep(10);
                 } catch (InterruptedException e) {
                     e.printStackTrace();
                 }
             }
-            logger.info("Flush last mem table");
-            persistMemTable(memTable, T_UPPER_LIMIT);
 
-            curDataFile.flushABuffer();
-            curDataFile.flushBodyBuffer();
-//            logger.info("Flushed data file with start " + curDataFile.start + " at end");
+            int index = putCounter.get() % RING_BUFFER_SIZE;
+            if (index == 0) {
+                int start = RING_BUFFER_SIZE - PERSIST_SEGMENT_SIZE;
+                int end = start + PERSIST_SEGMENT_SIZE;
+                persistMemTable(start, end);
+            } else {
+                int start = ((index - 1) / PERSIST_SEGMENT_SIZE) * PERSIST_SEGMENT_SIZE;
+                int end = index;
+                persistMemTable(start, end);
+            }
 
-//            verifyData();
+            sortSSTableList();
             persistDone = true;
             persistThreadPool.shutdown();
-            persistBuffer1 = null;
-            persistBuffer2 = null;
-            System.gc();
-
-            logger.info("Flushed all memTables, msg count1: " + putCounter.get()
-                    + ", msg count2: " + tIndexCounter
-                    + ", persist buffer index: " + persistBufferIndex
-                    + ", max buffer index: " + maxBufferIndex
-                    + ", time: " + (System.currentTimeMillis() - getStart));
-//            if (putCounter.get() != tIndexCounter) {
-//                throw new RuntimeException("Inc: " + (putCounter.get() - tIndexCounter));
-//            }
+            printSSTableList();
+            logger.info("Flushed all memTables, time: " + (System.currentTimeMillis() - getStart));
         }
         while (!persistDone) {
-//            logger.info("Waiting for all persist tasks to finish");
+            logger.info("Waiting for all persist tasks to finish");
             try {
-                Thread.sleep(50);
+                Thread.sleep(10);
             } catch (InterruptedException e) {
                 e.printStackTrace();
             }
@@ -336,41 +176,66 @@ public class LsmMessageStoreImpl extends MessageStore {
             }
         }
 
-        ArrayList<Message> result = new ArrayList<>(10240);
-        ByteBuffer aByteBufferForRead = threadBufferForReadA.get();
-        ByteBuffer bodyByteBufferForRead = threadBufferForReadBody.get();
-        aByteBufferForRead.flip();
-        bodyByteBufferForRead.flip();
+        List<SSTableFile> targetFileList = findTargetFileList(ssTableFileList, tMin, tMax);
+        if (getId % GET_SAMPLE_RATE == 0) {
+            logger.info("Found target files list: " + targetFileList.stream().map(s -> s.id).collect(Collectors.toList())
+                    + ", time: " + (System.currentTimeMillis() - getStart) + ", getId: " + getId);
+        }
 
-        int tDiff = (int) (tMin - tBase);
-        long offset = getOffsetByTDiff(tDiff);
+        ArrayList<Message> result = new ArrayList<>(4096);
+        ByteBuffer bufferForMsg = threadBufferForMsg.get();
 
-        for (long t = tMin; t <= tMax; t++) {
-            int msgCount = tIndex[tDiff++];
-            while (msgCount > 0) {
-                if (!aByteBufferForRead.hasRemaining()) {
-                    fillReadABuffer(aByteBufferForRead, offset);
+        for (SSTableFile file : targetFileList) {
+            try {
+                int index = findStartIndex(file, tMin, tMax);
+                if (getId % GET_SAMPLE_RATE == 0) {
+                    logger.info("Found index: " + index + " for file: " + file.id
+                            + ", time: " + (System.currentTimeMillis() - getStart) + ", getId: " + getId);
                 }
-                long a = aByteBufferForRead.getLong();
-                if (a >= aMin && a <= aMax) {
-                    if (!bodyByteBufferForRead.hasRemaining()) {
-                        fillReadBodyBuffer(bodyByteBufferForRead, offset);
+
+                int offset = index * Constants.MSG_BYTE_LENGTH;
+                boolean allFound = false;
+
+                while (!allFound && offset < file.size) {
+                    offset += file.channel.read(bufferForMsg, offset);
+                    bufferForMsg.flip();
+
+                    while (bufferForMsg.remaining() > 0) {
+                        long t = bufferForMsg.getLong();
+                        if (t < tMin) {
+                            bufferForMsg.position(bufferForMsg.position()
+                                    + Constants.KEY_A_BYTE_LENGTH + Constants.BODY_BYTE_LENGTH);
+                            continue;
+                        }
+                        if (t > tMax) {
+                            allFound = true;
+                            break;
+                        }
+                        long a = bufferForMsg.getLong();
+                        if (a >= aMin && a <= aMax) {
+                            byte[] body = new byte[Constants.BODY_BYTE_LENGTH];
+                            bufferForMsg.get(body);
+                            Message msg = new Message(a, t, body);
+                            result.add(msg);
+                        } else {
+                            bufferForMsg.position(bufferForMsg.position() + Constants.BODY_BYTE_LENGTH);
+                        }
                     }
-                    byte[] body = new byte[BODY_BYTE_LENGTH];
-                    bodyByteBufferForRead.get(body);
-                    Message msg = new Message(a, t, body);
-                    result.add(msg);
-                } else {
-                    bodyByteBufferForRead.position(bodyByteBufferForRead.position()
-                            + Math.min(bodyByteBufferForRead.remaining(), BODY_BYTE_LENGTH));
+                    bufferForMsg.clear();
                 }
-                offset++;
-                msgCount--;
+                if (getId % GET_SAMPLE_RATE == 0) {
+                    logger.info("Found total " + result.size() + " msgs for file: " + file.id
+                            + ", time: " + (System.currentTimeMillis() - getStart) + ", getId: " + getId);
+                }
+            } catch (IOException e) {
+                e.printStackTrace();
             }
         }
 
-        aByteBufferForRead.clear();
-        bodyByteBufferForRead.clear();
+        if (targetFileList.size() > 1) {
+            result.sort(Comparator.comparingLong(Message::getT));
+        }
+//        printGetResult(result);
 
         if (IS_TEST_RUN) {
             getMsgCounter.addAndGet(result.size());
@@ -411,179 +276,248 @@ public class LsmMessageStoreImpl extends MessageStore {
             }
         }
         long sum = 0;
-        int count = 0;
+        long count = 0;
 
-        ByteBuffer aByteBufferForRead = threadBufferForReadA.get();
-        aByteBufferForRead.flip();
+        List<SSTableFile> targetFileList = findTargetFileList(ssTableFileListTa, tMin, tMax);
+        if (avgId % AVG_SAMPLE_RATE == 0) {
+            logger.info("Found target files list: " + targetFileList.stream().map(s -> s.id).collect(Collectors.toList())
+                    + ", time: " + (System.currentTimeMillis() - avgStart) + ", avgId: " + avgId);
+        }
 
-        int tDiff = (int) (tMin - tBase);
-        long offset = getOffsetByTDiff(tDiff);
+        ByteBuffer bufferForMsg = threadBufferForMsgTa.get();
 
-        for (long t = tMin; t <= tMax; t++) {
-            int msgCount = tIndex[tDiff++];
-            while (msgCount > 0) {
-                if (aByteBufferForRead.remaining() == 0) {
-                    fillReadABuffer(aByteBufferForRead, offset);
+        for (SSTableFile file : targetFileList) {
+            FileChannel fileChannel = file.channel;
+            try {
+                int index = findStartIndex(file, tMin, tMax);
+                if (avgId % AVG_SAMPLE_RATE == 0) {
+                    logger.info("Found index: " + index + " for file: " + file.id
+                            + ", time: " + (System.currentTimeMillis() - avgStart) + ", avgId: " + avgId);
                 }
-                long a = aByteBufferForRead.getLong();
-                if (a >= aMin && a <= aMax) {
-                    sum += a;
-                    count++;
+
+                int offset = index * Constants.TA_BYTE_LENGTH;
+                boolean allFound = false;
+
+                while (!allFound && offset < file.size) {
+                    offset += fileChannel.read(bufferForMsg, offset);
+                    bufferForMsg.flip();
+
+                    while (bufferForMsg.remaining() > 0) {
+                        long t = bufferForMsg.getLong();
+                        if (t < tMin) {
+                            bufferForMsg.position(bufferForMsg.position() + Constants.KEY_A_BYTE_LENGTH);
+                            continue;
+                        }
+                        if (t > tMax) {
+                            allFound = true;
+                            break;
+                        }
+                        long a = bufferForMsg.getLong();
+                        if (a >= aMin && a <= aMax) {
+                            sum += a;
+                            count++;
+                        }
+                    }
+                    bufferForMsg.clear();
                 }
-                offset++;
-                msgCount--;
+                if (avgId % GET_SAMPLE_RATE == 0) {
+                    logger.info("Found total " + count + " msgs for file: " + file.id
+                            + ", time: " + (System.currentTimeMillis() - avgStart) + ", avgId: " + avgId);
+                }
+            } catch (IOException e) {
+                e.printStackTrace();
             }
         }
-        aByteBufferForRead.clear();
 
-        if (avgId % AVG_SAMPLE_RATE == 0) {
-            logger.info("Got " + count
-                    + ", time: " + (System.currentTimeMillis() - avgStart));
-        }
         if (IS_TEST_RUN) {
-            avgMsgCounter.addAndGet(count);
+            avgMsgCounter.addAndGet((int) count);
         }
         return count == 0 ? 0 : sum / count;
     }
 
-    private void verifyData() {
-        int totalCount = 0;
-        for (long t = tBase; t < tBase + tIndex.length; t++) {
-            assert t % T_INDEX_SUMMARY_FACTOR != 0
-                    || tIndexSummary[(int) (t / T_INDEX_SUMMARY_FACTOR)] == totalCount;
-            int tDiff = (int) (t - tBase);
-            int count = tIndex[tDiff];
-            totalCount += count;
-            if (t % PUT_SAMPLE_RATE == 0) {
-                logger.info("Total count: " + totalCount + ", t: " + t);
+    private int findStartIndex(SSTableFile file, long tMin, long tMax) throws IOException {
+        if (tMin <= file.tStart) {
+            return 0;
+        }
+        long[] fileIndexList = file.fileIndexList;
+        int start = 0;
+        int end = fileIndexList.length - 1;
+        while (start < end) {
+            int index = (start + end) / 2;
+            long t = fileIndexList[index];
+            if (t < tMin) {
+                start = index + 1;
+            } else {
+                end = index;
             }
         }
-        logger.info("Total count: " + totalCount);
-
-//        ByteBuffer aByteBufferForRead = threadBufferForReadA.get();
-//        ByteBuffer bodyByteBufferForRead = threadBufferForReadBody.get();
-//        aByteBufferForRead.flip();
-//        bodyByteBufferForRead.flip();
-//        long offset = 0;
-//
-//        while (true) {
-//            if (!aByteBufferForRead.hasRemaining()) {
-//                try {
-//                    aByteBufferForRead.clear();
-//                    int nBytes = aFileChannel.read(aByteBufferForRead, offset);
-//                    if (nBytes <= 0) {
-//                        break;
-//                    }
-//                    offset += nBytes;
-//                    aByteBufferForRead.flip();
-//                } catch (IOException e) {
-//                    e.printStackTrace();
-//                }
-//            }
-////            long a = aByteBufferForRead.getLong();
-////            logger.info(a);
-//        }
-//        logger.info("Offset for A: " + offset);
-//
-//        aByteBufferForRead.clear();
-//        bodyByteBufferForRead.clear();
+        return start > 0 ? (start - 1) * SST_FILE_INDEX_RATE : 0;
     }
 
-    private void fillReadABuffer(ByteBuffer readABuffer, long offset) {
-        DataFile dataFile = dataFileList.get((int) (offset / DATA_SEGMENT_SIZE));
-        try {
-            readABuffer.clear();
-            dataFile.aChannel.read(readABuffer, (offset - dataFile.start) * KEY_A_BYTE_LENGTH);
-            readABuffer.flip();
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-    }
-
-    private void fillReadBodyBuffer(ByteBuffer readBodyBuffer, long offset) {
-        DataFile dataFile = dataFileList.get((int) (offset / DATA_SEGMENT_SIZE));
-        try {
-            readBodyBuffer.clear();
-            dataFile.bodyChannel.read(readBodyBuffer, (offset - dataFile.start) * BODY_BYTE_LENGTH);
-            readBodyBuffer.flip();
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-    }
-
-    private DataFile newDataFile(int start, int end) {
-        DataFile dataFile = new DataFile();
-        dataFile.index = dataFileCounter++;
-        try {
-            dataFile.aFile = new RandomAccessFile(
-                    Constants.DATA_DIR + "a" + dataFile.index + ".data", "rw");
-            dataFile.bodyFile = new RandomAccessFile(
-                    Constants.DATA_DIR + "body" + dataFile.index + ".data", "rw");
-        } catch (FileNotFoundException e) {
-            e.printStackTrace();
-        }
-        dataFile.aChannel = dataFile.aFile.getChannel();
-        dataFile.bodyChannel = dataFile.bodyFile.getChannel();
-        dataFile.start = start;
-        dataFile.end = end;
-        if (dataFile.end < 0) {
-            dataFile.end = MSG_COUNT_UPPER_LIMIT;
-        }
-        dataFileList.add(dataFile);
-//        logger.info("Created data file: [" + dataFile.start + ", " + dataFile.end + "]");
-        return dataFile;
-    }
-
-    private static class DataFile {
+    private List<SSTableFile> findTargetFileList(List<SSTableFile> sourceFileList, long tMin, long tMax) {
+        List<SSTableFile> targetFileList = new ArrayList<>();
         int index;
-        int start;
-        int end;
-        RandomAccessFile aFile;
-        RandomAccessFile bodyFile;
-        FileChannel aChannel;
-        FileChannel bodyChannel;
-
-        void writeA(long a) {
-            if (!aBufferForWrite.hasRemaining()) {
-                flushABuffer();
+        int start = 0;
+        int end = sourceFileList.size() - 1;
+        while (start < end) {
+            index = (start + end) / 2;
+            long fileEnd = sourceFileList.get(index).tEnd;
+            if (fileEnd < tMin) {
+                start = index + 1;
+            } else {
+                end = index;
             }
-            aBufferForWrite.putLong(a);
+        }
+        index = start;
+        for (int i = index; i < Math.min(i + 10, sourceFileList.size()); i++) {
+            SSTableFile file = sourceFileList.get(i);
+            if (tMax >= file.tStart && tMin <= file.tEnd) {
+                targetFileList.add(file);
+            }
+        }
+        return targetFileList;
+    }
+
+    private void persistMemTable(int start, int end) {
+        long persistStart = System.currentTimeMillis();
+        int fileId = fileCounter.getAndIncrement();
+        String fileName = Constants.DATA_DIR+ "sst" + fileId + ".data";
+        if (fileId % PERSIST_SAMPLE_RATE == 0) {
+            logger.info("Start persisting memTable to file: " + fileName);
+        }
+        logger.info("persist: " + start + " to " + end);
+
+        Arrays.sort(ringBuffer, start, end, Comparator.comparingLong(Message::getT));
+
+        String fileNameTa = Constants.DATA_DIR+ "ssta" + fileId + ".data";
+
+        RandomAccessFile raf = null;
+        RandomAccessFile rafTa = null;
+        try {
+            raf = new RandomAccessFile(fileName, "rw");
+            rafTa = new RandomAccessFile(fileNameTa, "rw");
+        } catch (FileNotFoundException e) {
+            logger.info("[ERROR] File not found", e);
+            throw new RuntimeException(e);
         }
 
-        void writeBody(byte[] body) {
-            if (!bodyBufferForWrite.hasRemaining()) {
-                flushBodyBuffer();
+        ByteBuffer buffer = threadBufferForWrite.get();
+        ByteBuffer bufferTa = threadBufferForWriteTa.get();
+
+        FileChannel channel = raf.getChannel();
+        FileChannel channelTa = rafTa.getChannel();
+        long[] fileIndexList = new long[(PERSIST_SEGMENT_SIZE - 1) / SST_FILE_INDEX_RATE + 1];
+        int writeCount = 0;
+        int writeBytes = 0;
+
+        for (int i = start; i < end; i++) {
+            Message msg = ringBuffer[i];
+            if (buffer.remaining() < Constants.MSG_BYTE_LENGTH) {
+                buffer.flip();
+                try {
+                    writeBytes += buffer.limit();
+                    channel.write(buffer);
+                } catch (IOException e) {
+                    logger.info("[ERROR] Write to channel failed: " + e.getMessage());
+                }
+                buffer.clear();
             }
-            bodyBufferForWrite.put(body);
+            if (bufferTa.remaining() < Constants.TA_BYTE_LENGTH) {
+                bufferTa.flip();
+                try {
+                    channelTa.write(bufferTa);
+                } catch (IOException e) {
+                    logger.info("[ERROR] Write to channel failed: " + e.getMessage());
+                }
+                bufferTa.clear();
+            }
+            buffer.putLong(msg.getT());
+            buffer.putLong(msg.getA());
+            buffer.put(msg.getBody());
+            bufferTa.putLong(msg.getT());
+            bufferTa.putLong(msg.getA());
+            if (writeCount % SST_FILE_INDEX_RATE == 0) {
+                fileIndexList[writeCount / SST_FILE_INDEX_RATE] = msg.getT();
+            }
+            writeCount++;
         }
 
-        void flushABuffer() {
-            aBufferForWrite.flip();
+        buffer.flip();
+        try {
+            writeBytes += buffer.limit();
+            channel.write(buffer);
+        } catch (IOException e) {
+            logger.info("ERROR write to file channel: " + e.getMessage());
+        }
+        buffer.clear();
+        bufferTa.flip();
+        try {
+            channelTa.write(bufferTa);
+        } catch (IOException e) {
+            logger.info("ERROR write to file channel: " + e.getMessage());
+        }
+        bufferTa.clear();
+
+        long minT = ringBuffer[start].getT();
+        long maxT = ringBuffer[end - 1].getT();
+
+        ssTableFileList.add(new SSTableFile(fileId, raf, channel, minT, maxT, fileIndexList));
+        ssTableFileListTa.add(new SSTableFile(fileId, rafTa, channelTa, minT, maxT, fileIndexList));
+
+        if (fileId % PERSIST_SAMPLE_RATE == 0) {
+            logger.info("Done persisting memTable to file: " + fileName
+                    + ", written msgs: " + writeCount + ", written bytes: " + writeBytes
+                    + ", index size: " + fileIndexList.length + ", time: " + (System.currentTimeMillis() - persistStart));
+        }
+        writeCounter.addAndGet(writeCount);
+    }
+
+    private static class SSTableFile {
+        RandomAccessFile file;
+        FileChannel channel;
+        int id = -1;
+        long tStart = 0;
+        long tEnd = 0;
+        int size = 0;
+        int msgs = 0;
+        long[] fileIndexList;
+
+        SSTableFile(int id, RandomAccessFile file, FileChannel channel, long tStart, long tEnd, long[] fileIndexList) {
+            this.id = id;
+            this.file = file;
+            this.channel = channel;
+            this.tStart = tStart;
+            this.tEnd = tEnd;
             try {
-                aChannel.write(aBufferForWrite);
+                this.size = (int) channel.size();
+                this.msgs = size / Constants.MSG_BYTE_LENGTH;
             } catch (IOException e) {
-                logger.info("[ERROR] Write to channel failed: " + e.getMessage());
+                e.printStackTrace();
             }
-            aBufferForWrite.clear();
-        }
-
-        void flushBodyBuffer() {
-            bodyBufferForWrite.flip();
-            try {
-                bodyChannel.write(bodyBufferForWrite);
-            } catch (IOException e) {
-                logger.info("[ERROR] Write to channel failed: " + e.getMessage());
-            }
-            bodyBufferForWrite.clear();
+            this.fileIndexList = fileIndexList;
         }
     }
 
-    private AtomicLong getMsgCounter = new AtomicLong(0);
-    private AtomicLong avgMsgCounter = new AtomicLong(0);
+    private void sortSSTableList() {
+        ssTableFileList.sort(Comparator.comparingLong((o) -> o.tEnd));
+    }
 
-    private long _putStart = 0;
-    private long _putEnd = 0;
-    private long _getStart = 0;
-    private long _getEnd = 0;
-    private long _avgStart = 0;
+    private void printSSTableList() {
+        logger.info("SSTableFile list with size: " + ssTableFileList.size());
+        for (SSTableFile file : ssTableFileList.subList(0, Math.min(10, ssTableFileList.size()))) {
+            try {
+                logger.info(file.id + "\t[" + file.tStart + ", " + file.tEnd + "] - "
+                        + file.channel.size() + " / " + Constants.MSG_BYTE_LENGTH + " = " + file.msgs);
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    private void printGetResult(List<Message> result) {
+        logger.info("Get result with size: " + result.size());
+        for (Message m : result.subList(0, Math.min(result.size(), 10))) {
+            logger.info("m.t: " + m.getT() + ", m.a: " + m.getA());
+        }
+    }
 }

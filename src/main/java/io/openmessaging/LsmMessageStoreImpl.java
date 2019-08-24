@@ -17,10 +17,12 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.stream.Collectors;
 
-import static io.openmessaging.Constants.IS_TEST_RUN;
-import static io.openmessaging.Constants.TEST_BOUNDARY;
+import static io.openmessaging.Constants.*;
 
 /**
  * @author .ignore 2019-07-29
@@ -86,6 +88,9 @@ public class LsmMessageStoreImpl extends MessageStore {
     private long _getEnd = 0;
     private long _avgStart = 0;
 
+    private final Object lock = new Object();
+    private boolean[] doneFlags = new boolean[16];
+
     @Override
     public void put(Message message) {
         long putStart = System.currentTimeMillis();
@@ -100,14 +105,14 @@ public class LsmMessageStoreImpl extends MessageStore {
             logger.info("putMessage - t: " + message.getT() + ", a: " + message.getA() + ", putId: " + putId);
         }
 
-        while (putId >= writeCounter.get() + RING_BUFFER_SIZE) {
-            logger.info("Waiting for buffer to be available");
-            try {
-                Thread.sleep(10);
-            } catch (InterruptedException e) {
-                e.printStackTrace();
-            }
-        }
+//        while (putId >= writeCounter.get() + RING_BUFFER_SIZE) {
+//            logger.info("Waiting for buffer to be available");
+//            try {
+//                Thread.sleep(10);
+//            } catch (InterruptedException e) {
+//                e.printStackTrace();
+//            }
+//        }
 
         int index = putId % RING_BUFFER_SIZE;
         ringBuffer[index] = message;
@@ -117,10 +122,34 @@ public class LsmMessageStoreImpl extends MessageStore {
                     + (System.currentTimeMillis() - putStart) + ", putId: " + putId);
         }
 
-        if (putId > 0 && index % PERSIST_SEGMENT_SIZE == 0) {
-            int start = (index + RING_BUFFER_SIZE - PERSIST_SEGMENT_SIZE) % RING_BUFFER_SIZE;
-            int end = start + PERSIST_SEGMENT_SIZE;
-            persistThreadPool.execute(() -> persistMemTable(start, end));
+        int segId = putId % PERSIST_SEGMENT_SIZE;
+        if (putId >= PERSIST_SEGMENT_SIZE && segId < PRODUCER_THREAD_NUM) {
+            int taskId = putId / PERSIST_SEGMENT_SIZE;
+            if (segId == 0) {
+                int start = (index + RING_BUFFER_SIZE - PERSIST_SEGMENT_SIZE) % RING_BUFFER_SIZE;
+                int end = start + PERSIST_SEGMENT_SIZE;
+                persistMemTable(start, end);
+                synchronized (lock) {
+                    doneFlags[taskId] = true;
+                    lock.notifyAll();
+                    logger.info("Done " + taskId + " in " + putId);
+                }
+            } else {
+                synchronized (lock) {
+                    while (!doneFlags[taskId]) {
+                        logger.info("Waiting for " + taskId + " in " + putId);
+                        try {
+                            lock.wait(5000);
+                            if (!doneFlags[taskId]) {
+                                throw new RuntimeException("timeout");
+                            }
+                        } catch (InterruptedException e) {
+                            e.printStackTrace();
+                        }
+                    }
+                }
+            }
+//            persistThreadPool.execute(() -> persistMemTable(start, end));
         }
     }
 
@@ -381,7 +410,7 @@ public class LsmMessageStoreImpl extends MessageStore {
     private void persistMemTable(int start, int end) {
         long persistStart = System.currentTimeMillis();
         int fileId = fileCounter.getAndIncrement();
-        String fileName = Constants.DATA_DIR+ "sst" + fileId + ".data";
+        String fileName = Constants.DATA_DIR + "sst" + fileId + ".data";
         if (fileId % PERSIST_SAMPLE_RATE == 0) {
             logger.info("Start persisting memTable to file: " + fileName);
         }
@@ -389,7 +418,7 @@ public class LsmMessageStoreImpl extends MessageStore {
 
         Arrays.sort(ringBuffer, start, end, Comparator.comparingLong(Message::getT));
 
-        String fileNameTa = Constants.DATA_DIR+ "ssta" + fileId + ".data";
+        String fileNameTa = Constants.DATA_DIR + "ssta" + fileId + ".data";
 
         RandomAccessFile raf = null;
         RandomAccessFile rafTa = null;

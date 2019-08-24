@@ -8,10 +8,7 @@ import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.List;
-import java.util.TreeSet;
+import java.util.*;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -31,7 +28,10 @@ public class NewMessageStoreImpl extends MessageStore {
     private static final long A_UPPER_LIMIT = Long.MAX_VALUE;
     private static final int MSG_COUNT_UPPER_LIMIT = Integer.MAX_VALUE;
 
-    private static final int MAX_MEM_TABLE_SIZE = 128 * 1024;
+    private static final int MAX_MEM_BUFFER_SIZE = 128 * 1024;
+    private static final int NUM_MEM_BUFFER = 16;
+    private static final int TOTAL_MEM_BUFFER_SIZE = NUM_MEM_BUFFER * MAX_MEM_BUFFER_SIZE;
+
     private static final int PERSIST_BUFFER_SIZE = 4 * 1024 * 1024;
 
     private static final int DATA_SEGMENT_SIZE = 4 * 1024 * 1024;
@@ -58,44 +58,48 @@ public class NewMessageStoreImpl extends MessageStore {
     private static ByteBuffer aBufferForWrite = ByteBuffer.allocateDirect(WRITE_A_BUFFER_SIZE);
     private static ByteBuffer bodyBufferForWrite = ByteBuffer.allocateDirect(WRITE_BODY_BUFFER_SIZE);
 
-    static {
-        logger.info("LsmMessageStoreImpl load start");
-//        logger.info("LsmMessageStoreImpl load end");
-    }
+    private static MemBuffer[] memBufferList = new MemBuffer[NUM_MEM_BUFFER];
 
-    private ThreadPoolExecutor persistThreadPool = (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
+    private static AtomicInteger threadIdCounter = new AtomicInteger(0);
+    private static ThreadLocal<Integer> threadId = ThreadLocal.withInitial(() -> threadIdCounter.getAndIncrement());
 
-    private AtomicInteger putCounter = new AtomicInteger(0);
-    private AtomicInteger getCounter = new AtomicInteger(0);
-    private AtomicInteger avgCounter = new AtomicInteger(0);
-    private int persistCounter = 0;
-    private int dataFileCounter = 0;
+    private static ThreadPoolExecutor persistThreadPool = (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
 
-    private volatile Collection<Message> memTable = createMemTable();
-//    private Collection<Message> memTable = createMemTable();
+    private static AtomicInteger putCounter = new AtomicInteger(0);
+    private static AtomicInteger getCounter = new AtomicInteger(0);
+    private static AtomicInteger avgCounter = new AtomicInteger(0);
+    private static int persistCounter = 0;
+    private static int dataFileCounter = 0;
 
-    private Message[] persistBuffer1 = new Message[PERSIST_BUFFER_SIZE];
-    private Message[] persistBuffer2 = new Message[PERSIST_BUFFER_SIZE];
-    private int persistBufferIndex = 0;
-    private volatile boolean persistDone = false;
+//    private volatile Collection<Message> memTable = createMemTable();
 
-    private short[] tIndex = new short[T_INDEX_SIZE];
-    private int[] tIndexSummary = new int[T_INDEX_SIZE / T_INDEX_SUMMARY_FACTOR];
-    private long[] tCurrent = new long[PRODUCER_THREAD_NUM];
-    private int tIndexCounter = 0;
-    private long tBase = -1;
+    private static Message[] persistBuffer1 = new Message[PERSIST_BUFFER_SIZE];
+    private static Message[] persistBuffer2 = new Message[PERSIST_BUFFER_SIZE];
+    private static int persistBufferIndex = 0;
+    private static volatile boolean persistDone = false;
 
-    private long maxBufferIndex = Long.MIN_VALUE;
+    private static short[] tIndex = new short[T_INDEX_SIZE];
+    private static int[] tIndexSummary = new int[T_INDEX_SIZE / T_INDEX_SUMMARY_FACTOR];
+//    private long[] tCurrent = new long[PRODUCER_THREAD_NUM];
+    private static int tIndexCounter = 0;
+    private static long tBase = -1;
 
-    private Message sentinelMessage = new Message(T_UPPER_LIMIT, A_UPPER_LIMIT, null);
+    private static long maxBufferIndex = Long.MIN_VALUE;
 
-    private ThreadLocal<ByteBuffer> threadBufferForReadA = ThreadLocal.withInitial(()
+    private static Message sentinelMessage = new Message(T_UPPER_LIMIT, A_UPPER_LIMIT, null);
+
+    private static ThreadLocal<ByteBuffer> threadBufferForReadA = ThreadLocal.withInitial(()
             -> ByteBuffer.allocateDirect(READ_A_BUFFER_SIZE));
-    private ThreadLocal<ByteBuffer> threadBufferForReadBody = ThreadLocal.withInitial(()
+    private static ThreadLocal<ByteBuffer> threadBufferForReadBody = ThreadLocal.withInitial(()
             -> ByteBuffer.allocateDirect(READ_BODY_BUFFER_SIZE));
 
-    private AtomicInteger threadIdCounter = new AtomicInteger(0);
-    private ThreadLocal<Integer> threadId = ThreadLocal.withInitial(() -> threadIdCounter.getAndIncrement());
+    static {
+        logger.info("LsmMessageStoreImpl load start");
+        for (int i = 0; i < NUM_MEM_BUFFER; i++) {
+            memBufferList[i] = new MemBuffer();
+        }
+        logger.info("LsmMessageStoreImpl load end");
+    }
 
     @Override
     public void put(Message message) {
@@ -111,73 +115,95 @@ public class NewMessageStoreImpl extends MessageStore {
 //            logger.info("Before add, time: " + (System.nanoTime() - putStart));
 //        }
 
-        synchronized (this) {
-            memTable.add(message);
+//        synchronized (this) {
+//            memTable.add(message);
+//        }
+
+        boolean hasWait = false;
+        while (putId >= tIndexCounter + TOTAL_MEM_BUFFER_SIZE) {
+            if (!hasWait) {
+                hasWait = true;
+            }
+            try {
+                Thread.sleep(1);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
         }
+        if (hasWait) {
+            logger.info("Waited full buffer, time: " + (System.nanoTime() - putStart));
+        }
+
+        int roundId = putId % TOTAL_MEM_BUFFER_SIZE;
+        MemBuffer memBuffer = memBufferList[roundId / MAX_MEM_BUFFER_SIZE];
+        memBuffer.addMessage(message, roundId % MAX_MEM_BUFFER_SIZE);
 
         if (putId % PUT_SAMPLE_RATE == 0) {
             logger.info("Put message to memTable with t: " + message.getT() + ", a: " + message.getA()
                     + ", time: " + (System.nanoTime() - putStart) + ", putId: " + putId);
         }
 
-        tCurrent[threadId.get()] = message.getT();
-
-        if ((putId + 1) % MAX_MEM_TABLE_SIZE == 0) {
-//            logger.info("Submit memTable persist task, putId: " + putId);
-            long currentMinT = tCurrent[0];
-            for (int i = 1; i < tCurrent.length; i++) {
-                currentMinT = Math.min(currentMinT, tCurrent[i]);
-            }
-            long finalCurrentMinT = currentMinT;
-
-            Collection<Message> frozenMemTable;
-            synchronized (this) {
-                frozenMemTable = memTable;
-                memTable = createMemTable();
-            }
-
-            persistThreadPool.execute(() -> {
-                try {
-                    persistMemTable(frozenMemTable, finalCurrentMinT);
-                } catch (Exception e) {
-                    logger.info("Failed to persist mem table", e);
-                    System.exit(-1);
-                }
-            });
-//            logger.info("Submitted memTable persist task, time: "
-//                    + (System.currentTimeMillis() - putStart) + ", putId: " + putId);
-        }
+//        tCurrent[threadId.get()] = message.getT();
+//
+//        if ((putId + 1) % MAX_MEM_BUFFER_SIZE == 0) {
+////            logger.info("Submit memTable persist task, putId: " + putId);
+//            long currentMinT = tCurrent[0];
+//            for (int i = 1; i < tCurrent.length; i++) {
+//                currentMinT = Math.min(currentMinT, tCurrent[i]);
+//            }
+//            long finalCurrentMinT = currentMinT;
+//
+//            Collection<Message> frozenMemTable;
+//            synchronized (this) {
+//                frozenMemTable = memTable;
+//                memTable = createMemTable();
+//            }
+//
+//            persistThreadPool.execute(() -> {
+//                try {
+//                    persistMemTable(frozenMemTable, finalCurrentMinT);
+//                } catch (Exception e) {
+//                    logger.info("Failed to persist mem table", e);
+//                    System.exit(-1);
+//                }
+//            });
+////            logger.info("Submitted memTable persist task, time: "
+////                    + (System.currentTimeMillis() - putStart) + ", putId: " + putId);
+//        }
 //        if (putId % PUT_SAMPLE_RATE == 0) {
 //            logger.info("Done put, time: " + (System.nanoTime() - putStart));
 //        }
     }
 
-    private Collection<Message> createMemTable() {
-//        return new ConcurrentSkipListSet<>((m1, m2) -> {
-        return new TreeSet<>((m1, m2) -> {
-            if (m1.getT() == m2.getT()) {
-                //noinspection ComparatorMethodParameterNotUsed
-                return -1;
-            }
-            // Order by T desc
-            return m2.getT() < m1.getT() ? -1 : 1;
-        });
-    }
+//    private Collection<Message> createMemTable() {
+////        return new ConcurrentSkipListSet<>((m1, m2) -> {
+//        return new TreeSet<>((m1, m2) -> {
+//            if (m1.getT() == m2.getT()) {
+//                //noinspection ComparatorMethodParameterNotUsed
+//                return -1;
+//            }
+//            // Order by T desc
+//            return m2.getT() < m1.getT() ? -1 : 1;
+//        });
+//    }
 
-    private void persistMemTable(Collection<Message> frozenMemTable, long currentMinT) {
+    private static void persistMemTable(Message[] memInternalBuffer, int size, long currentMinT) {
         long persistStart = System.currentTimeMillis();
         int persistId = persistCounter++;
         if (persistId % PERSIST_SAMPLE_RATE == 0) {
-            logger.info("Start persisting memTable with size: " + frozenMemTable.size()
+            logger.info("Start persisting memTable with size: " + size
                     + ", buffer index: " + persistBufferIndex + ", persistId: " + persistId);
         }
+
+        Arrays.sort(memInternalBuffer, 0, size, Comparator.comparingLong(m -> -m.getT()));
 
         Message[] sourceBuffer = persistId % 2 == 0? persistBuffer1 : persistBuffer2;
         Message[] targetBuffer = persistId % 2 == 1? persistBuffer1 : persistBuffer2;
 
         int i = 0;
         int j = 0;
-        for (Message message : frozenMemTable) {
+        for (int m = 0; m < size; m++) {
+            Message message = memInternalBuffer[m];
             while (i < persistBufferIndex && sourceBuffer[i].getT() >= message.getT()) {
                 targetBuffer[j++] = sourceBuffer[i++];
             }
@@ -191,7 +217,7 @@ public class NewMessageStoreImpl extends MessageStore {
         maxBufferIndex = Math.max(maxBufferIndex, persistBufferIndex);
 
         if (persistId % PERSIST_SAMPLE_RATE == 0) {
-            logger.info("Copied memTable with size: " + frozenMemTable.size() + " to buffer with index: " + persistBufferIndex
+            logger.info("Copied memTable with size: " + size + " to buffer with index: " + persistBufferIndex
                     + ", time: " + (System.currentTimeMillis() - persistStart) + ", persistId: " + persistId);
         }
 
@@ -268,7 +294,7 @@ public class NewMessageStoreImpl extends MessageStore {
         persistBufferIndex = index + 1;
 
         if (persistId % PERSIST_SAMPLE_RATE == 0) {
-            logger.info("Done persisting memTable with size: " + frozenMemTable.size()
+            logger.info("Done persisting memTable with size: " + size
                     + ", buffer index: " + persistBufferIndex
                     + ", time: " + (System.currentTimeMillis() - persistStart) + ", persistId: " + persistId);
         }
@@ -303,8 +329,14 @@ public class NewMessageStoreImpl extends MessageStore {
                     e.printStackTrace();
                 }
             }
-            logger.info("Flush last mem table");
-            persistMemTable(memTable, T_UPPER_LIMIT);
+            logger.info("Flushing remaining mem buffers");
+            for (int i = 0; i < memBufferList.length; i++) {
+                int bufferSize = memBufferList[i].size.get();
+                if (bufferSize > 0) {
+                    persistMemTable(memBufferList[i].buffer, bufferSize, T_UPPER_LIMIT);
+                    logger.info("Flushed mem buffer " + i);
+                }
+            }
 
             curDataFile.flushABuffer();
             curDataFile.flushBodyBuffer();
@@ -513,7 +545,7 @@ public class NewMessageStoreImpl extends MessageStore {
         }
     }
 
-    private DataFile newDataFile(int start, int end) {
+    private static DataFile newDataFile(int start, int end) {
         DataFile dataFile = new DataFile();
         dataFile.index = dataFileCounter++;
         try {
@@ -577,6 +609,32 @@ public class NewMessageStoreImpl extends MessageStore {
                 logger.info("[ERROR] Write to channel failed: " + e.getMessage());
             }
             bodyBufferForWrite.clear();
+        }
+    }
+
+    private static class MemBuffer {
+        Message[] buffer = new Message[MAX_MEM_BUFFER_SIZE];
+        AtomicInteger size = new AtomicInteger(0);
+        long[] tCurrent = new long[PRODUCER_THREAD_NUM];
+
+        void addMessage(Message message, int index) {
+            buffer[index] = message;
+            tCurrent[threadId.get()] = message.getT();
+            if (size.incrementAndGet() == MAX_MEM_BUFFER_SIZE) {
+                size.set(0);
+                persistThreadPool.execute(() -> {
+                    long currentMinT = tCurrent[0];
+                    for (int i = 1; i < tCurrent.length; i++) {
+                        currentMinT = Math.min(currentMinT, tCurrent[i]);
+                    }
+                    try {
+                        persistMemTable(buffer, MAX_MEM_BUFFER_SIZE, currentMinT);
+                    } catch (Exception e) {
+                        logger.info("Failed to persist mem table", e);
+                        System.exit(-1);
+                    }
+                });
+            }
         }
     }
 

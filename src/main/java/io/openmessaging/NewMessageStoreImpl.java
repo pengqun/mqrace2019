@@ -625,6 +625,7 @@ public class NewMessageStoreImpl extends MessageStore {
             tCurrent[threadId.get()] = message.getT();
             if (size.incrementAndGet() >= MAX_MEM_BUFFER_SIZE) {
                 if (size.get() > MAX_MEM_BUFFER_SIZE) {
+                    logger.info("size: " + size.get() + ", tOverflowCounter: " + tOverflowCounter);
                     throw new RuntimeException("mem buffer overflow");
                 }
                 persistThreadPool.execute(() -> {

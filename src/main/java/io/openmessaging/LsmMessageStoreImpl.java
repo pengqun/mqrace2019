@@ -153,6 +153,100 @@ public class LsmMessageStoreImpl extends MessageStore {
         }
     }
 
+    private void persistMemTable(int start, int end) {
+        long persistStart = System.currentTimeMillis();
+        int fileId = fileCounter.getAndIncrement();
+        String fileName = Constants.DATA_DIR + "sst" + fileId + ".data";
+        if (fileId % PERSIST_SAMPLE_RATE == 0) {
+            logger.info("Start persisting memTable to file: " + fileName);
+        }
+        logger.info("persist: " + start + " to " + end);
+
+        Arrays.sort(ringBuffer, start, end, Comparator.comparingLong(Message::getT));
+
+        String fileNameTa = Constants.DATA_DIR + "ssta" + fileId + ".data";
+
+        RandomAccessFile raf = null;
+        RandomAccessFile rafTa = null;
+        try {
+            raf = new RandomAccessFile(fileName, "rw");
+            rafTa = new RandomAccessFile(fileNameTa, "rw");
+        } catch (FileNotFoundException e) {
+            logger.info("[ERROR] File not found", e);
+            throw new RuntimeException(e);
+        }
+
+        ByteBuffer buffer = threadBufferForWrite.get();
+        ByteBuffer bufferTa = threadBufferForWriteTa.get();
+
+        FileChannel channel = raf.getChannel();
+        FileChannel channelTa = rafTa.getChannel();
+        long[] fileIndexList = new long[(PERSIST_SEGMENT_SIZE - 1) / SST_FILE_INDEX_RATE + 1];
+        int writeCount = 0;
+        int writeBytes = 0;
+
+        for (int i = start; i < end; i++) {
+            Message msg = ringBuffer[i];
+            if (buffer.remaining() < Constants.MSG_BYTE_LENGTH) {
+                buffer.flip();
+                try {
+                    writeBytes += buffer.limit();
+                    channel.write(buffer);
+                } catch (IOException e) {
+                    logger.info("[ERROR] Write to channel failed: " + e.getMessage());
+                }
+                buffer.clear();
+            }
+            if (bufferTa.remaining() < Constants.TA_BYTE_LENGTH) {
+                bufferTa.flip();
+                try {
+                    channelTa.write(bufferTa);
+                } catch (IOException e) {
+                    logger.info("[ERROR] Write to channel failed: " + e.getMessage());
+                }
+                bufferTa.clear();
+            }
+            buffer.putLong(msg.getT());
+            buffer.putLong(msg.getA());
+            buffer.put(msg.getBody());
+            bufferTa.putLong(msg.getT());
+            bufferTa.putLong(msg.getA());
+            if (writeCount % SST_FILE_INDEX_RATE == 0) {
+                fileIndexList[writeCount / SST_FILE_INDEX_RATE] = msg.getT();
+            }
+            writeCount++;
+        }
+
+        buffer.flip();
+        try {
+            writeBytes += buffer.limit();
+            channel.write(buffer);
+        } catch (IOException e) {
+            logger.info("ERROR write to file channel: " + e.getMessage());
+        }
+        buffer.clear();
+        bufferTa.flip();
+        try {
+            channelTa.write(bufferTa);
+        } catch (IOException e) {
+            logger.info("ERROR write to file channel: " + e.getMessage());
+        }
+        bufferTa.clear();
+
+        long minT = ringBuffer[start].getT();
+        long maxT = ringBuffer[end - 1].getT();
+
+        ssTableFileList.add(new SSTableFile(fileId, raf, channel, minT, maxT, fileIndexList));
+        ssTableFileListTa.add(new SSTableFile(fileId, rafTa, channelTa, minT, maxT, fileIndexList));
+
+        if (fileId % PERSIST_SAMPLE_RATE == 0) {
+            logger.info("Done persisting memTable to file: " + fileName
+                    + ", written msgs: " + writeCount + ", written bytes: " + writeBytes
+                    + ", index size: " + fileIndexList.length + ", time: " + (System.currentTimeMillis() - persistStart));
+        }
+        writeCounter.addAndGet(writeCount);
+    }
+
     @Override
     public List<Message> getMessage(long aMin, long aMax, long tMin, long tMax) {
         long getStart = System.currentTimeMillis();
@@ -405,100 +499,6 @@ public class LsmMessageStoreImpl extends MessageStore {
             }
         }
         return targetFileList;
-    }
-
-    private void persistMemTable(int start, int end) {
-        long persistStart = System.currentTimeMillis();
-        int fileId = fileCounter.getAndIncrement();
-        String fileName = Constants.DATA_DIR + "sst" + fileId + ".data";
-        if (fileId % PERSIST_SAMPLE_RATE == 0) {
-            logger.info("Start persisting memTable to file: " + fileName);
-        }
-        logger.info("persist: " + start + " to " + end);
-
-        Arrays.sort(ringBuffer, start, end, Comparator.comparingLong(Message::getT));
-
-        String fileNameTa = Constants.DATA_DIR + "ssta" + fileId + ".data";
-
-        RandomAccessFile raf = null;
-        RandomAccessFile rafTa = null;
-        try {
-            raf = new RandomAccessFile(fileName, "rw");
-            rafTa = new RandomAccessFile(fileNameTa, "rw");
-        } catch (FileNotFoundException e) {
-            logger.info("[ERROR] File not found", e);
-            throw new RuntimeException(e);
-        }
-
-        ByteBuffer buffer = threadBufferForWrite.get();
-        ByteBuffer bufferTa = threadBufferForWriteTa.get();
-
-        FileChannel channel = raf.getChannel();
-        FileChannel channelTa = rafTa.getChannel();
-        long[] fileIndexList = new long[(PERSIST_SEGMENT_SIZE - 1) / SST_FILE_INDEX_RATE + 1];
-        int writeCount = 0;
-        int writeBytes = 0;
-
-        for (int i = start; i < end; i++) {
-            Message msg = ringBuffer[i];
-            if (buffer.remaining() < Constants.MSG_BYTE_LENGTH) {
-                buffer.flip();
-                try {
-                    writeBytes += buffer.limit();
-                    channel.write(buffer);
-                } catch (IOException e) {
-                    logger.info("[ERROR] Write to channel failed: " + e.getMessage());
-                }
-                buffer.clear();
-            }
-            if (bufferTa.remaining() < Constants.TA_BYTE_LENGTH) {
-                bufferTa.flip();
-                try {
-                    channelTa.write(bufferTa);
-                } catch (IOException e) {
-                    logger.info("[ERROR] Write to channel failed: " + e.getMessage());
-                }
-                bufferTa.clear();
-            }
-            buffer.putLong(msg.getT());
-            buffer.putLong(msg.getA());
-            buffer.put(msg.getBody());
-            bufferTa.putLong(msg.getT());
-            bufferTa.putLong(msg.getA());
-            if (writeCount % SST_FILE_INDEX_RATE == 0) {
-                fileIndexList[writeCount / SST_FILE_INDEX_RATE] = msg.getT();
-            }
-            writeCount++;
-        }
-
-        buffer.flip();
-        try {
-            writeBytes += buffer.limit();
-            channel.write(buffer);
-        } catch (IOException e) {
-            logger.info("ERROR write to file channel: " + e.getMessage());
-        }
-        buffer.clear();
-        bufferTa.flip();
-        try {
-            channelTa.write(bufferTa);
-        } catch (IOException e) {
-            logger.info("ERROR write to file channel: " + e.getMessage());
-        }
-        bufferTa.clear();
-
-        long minT = ringBuffer[start].getT();
-        long maxT = ringBuffer[end - 1].getT();
-
-        ssTableFileList.add(new SSTableFile(fileId, raf, channel, minT, maxT, fileIndexList));
-        ssTableFileListTa.add(new SSTableFile(fileId, rafTa, channelTa, minT, maxT, fileIndexList));
-
-        if (fileId % PERSIST_SAMPLE_RATE == 0) {
-            logger.info("Done persisting memTable to file: " + fileName
-                    + ", written msgs: " + writeCount + ", written bytes: " + writeBytes
-                    + ", index size: " + fileIndexList.length + ", time: " + (System.currentTimeMillis() - persistStart));
-        }
-        writeCounter.addAndGet(writeCount);
     }
 
     private static class SSTableFile {

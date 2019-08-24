@@ -17,9 +17,6 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReadWriteLock;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.stream.Collectors;
 
 import static io.openmessaging.Constants.*;
@@ -38,7 +35,7 @@ public class LsmMessageStoreImpl extends MessageStore {
     private static final int WRITE_TA_BUFFER_SIZE = Constants.TA_BYTE_LENGTH * 1024;
     private static final int READ_TA_BUFFER_SIZE = Constants.TA_BYTE_LENGTH * 1024;
 
-    private static final int PERSIST_SAMPLE_RATE = 100;
+    private static final int PERSIST_SAMPLE_RATE = 1000;
     private static final int PUT_SAMPLE_RATE = 10000000;
     private static final int GET_SAMPLE_RATE = 1000;
     private static final int AVG_SAMPLE_RATE = 1000;
@@ -98,9 +95,9 @@ public class LsmMessageStoreImpl extends MessageStore {
         if (IS_TEST_RUN && putId == 0) {
             _putStart = System.currentTimeMillis();
         }
-        if (IS_TEST_RUN && putId == 10000 * 10000) {
-            throw new RuntimeException("" + (System.currentTimeMillis() - _putStart));
-        }
+//        if (IS_TEST_RUN && putId == 10000 * 10000) {
+//            throw new RuntimeException("" + (System.currentTimeMillis() - _putStart));
+//        }
         if (putId % PUT_SAMPLE_RATE == 0) {
             logger.info("putMessage - t: " + message.getT() + ", a: " + message.getA() + ", putId: " + putId);
         }

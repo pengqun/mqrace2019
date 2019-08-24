@@ -97,7 +97,7 @@ public class NewMessageStoreImpl extends MessageStore {
     static {
         logger.info("LsmMessageStoreImpl load start");
         for (int i = 0; i < NUM_MEM_BUFFER; i++) {
-            memBufferList[i] = new MemBuffer();
+            memBufferList[i] = new MemBuffer(i);
         }
         logger.info("LsmMessageStoreImpl load end");
     }
@@ -616,9 +616,14 @@ public class NewMessageStoreImpl extends MessageStore {
     }
 
     private static class MemBuffer {
+        int id;
         Message[] buffer = new Message[MAX_MEM_BUFFER_SIZE];
         AtomicInteger size = new AtomicInteger(0);
         long[] tCurrent = new long[PRODUCER_THREAD_NUM];
+
+        public MemBuffer(int id) {
+            this.id = id;
+        }
 
         void addMessage(Message message, int index) {
             buffer[index] = message;
@@ -633,6 +638,7 @@ public class NewMessageStoreImpl extends MessageStore {
                     for (int i = 1; i < tCurrent.length; i++) {
                         currentMinT = Math.min(currentMinT, tCurrent[i]);
                     }
+                    logger.info("Persist mem buffer: " + id);
                     try {
                         persistMemTable(buffer, MAX_MEM_BUFFER_SIZE, currentMinT);
                     } catch (Exception e) {
@@ -640,6 +646,7 @@ public class NewMessageStoreImpl extends MessageStore {
                         System.exit(-1);
                     }
                     size.set(0);
+                    logger.info("Persisted mem buffer: " + id);
                     tOverflowCounter += MAX_MEM_BUFFER_SIZE;
                 });
             }

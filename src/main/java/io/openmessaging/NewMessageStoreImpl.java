@@ -119,20 +119,20 @@ public class NewMessageStoreImpl extends MessageStore {
 //            memTable.add(message);
 //        }
 
-        boolean hasWait = false;
+//        boolean hasWait = false;
         while (putId >= tIndexCounter + TOTAL_MEM_BUFFER_SIZE) {
-            if (!hasWait) {
-                hasWait = true;
-            }
+//            if (!hasWait) {
+//                hasWait = true;
+//            }
             try {
                 Thread.sleep(1);
             } catch (InterruptedException e) {
                 e.printStackTrace();
             }
         }
-        if (hasWait) {
-            logger.info("Waited full buffer, time: " + (System.nanoTime() - putStart));
-        }
+//        if (hasWait) {
+//            logger.info("Waited full buffer, time: " + (System.nanoTime() - putStart));
+//        }
 
         int roundId = putId % TOTAL_MEM_BUFFER_SIZE;
         MemBuffer memBuffer = memBufferList[roundId / MAX_MEM_BUFFER_SIZE];
@@ -196,6 +196,10 @@ public class NewMessageStoreImpl extends MessageStore {
         }
 
         Arrays.sort(memInternalBuffer, 0, size, Comparator.comparingLong(m -> -m.getT()));
+        if (persistId % PERSIST_SAMPLE_RATE == 0) {
+            logger.info("Sorted memTable with size: " + size + ", buffer index: " + persistBufferIndex
+                    + ", time: " + (System.currentTimeMillis() - persistStart) + ", persistId: " + persistId);
+        }
 
         Message[] sourceBuffer = persistId % 2 == 0? persistBuffer1 : persistBuffer2;
         Message[] targetBuffer = persistId % 2 == 1? persistBuffer1 : persistBuffer2;

@@ -89,7 +89,7 @@ public class LsmMessageStoreImpl extends MessageStore {
     private long _avgStart = 0;
 
     private final Object lock = new Object();
-    private boolean[] doneFlags = new boolean[16];
+    private boolean[] doneFlags = new boolean[30000];
 
     @Override
     public void put(Message message) {

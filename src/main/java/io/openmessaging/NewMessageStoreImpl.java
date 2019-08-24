@@ -29,7 +29,7 @@ public class NewMessageStoreImpl extends MessageStore {
     private static final int MSG_COUNT_UPPER_LIMIT = Integer.MAX_VALUE;
 
     private static final int MAX_MEM_BUFFER_SIZE = 128 * 1024;
-    private static final int NUM_MEM_BUFFER = 4;
+    private static final int NUM_MEM_BUFFER = 16;
     private static final int TOTAL_MEM_BUFFER_SIZE = NUM_MEM_BUFFER * MAX_MEM_BUFFER_SIZE;
 
     private static final int PERSIST_BUFFER_SIZE = 4 * 1024 * 1024;
@@ -82,6 +82,7 @@ public class NewMessageStoreImpl extends MessageStore {
     private static int[] tIndexSummary = new int[T_INDEX_SIZE / T_INDEX_SUMMARY_FACTOR];
 //    private long[] tCurrent = new long[PRODUCER_THREAD_NUM];
     private static int tIndexCounter = 0;
+    private static int tOverflowCounter = TOTAL_MEM_BUFFER_SIZE;
     private static long tBase = -1;
 
     private static long maxBufferIndex = Long.MIN_VALUE;
@@ -119,20 +120,18 @@ public class NewMessageStoreImpl extends MessageStore {
 //            memTable.add(message);
 //        }
 
-//        boolean hasWait = false;
-        while (putId >= tIndexCounter + TOTAL_MEM_BUFFER_SIZE) {
-//            if (!hasWait) {
-//                hasWait = true;
-//            }
+        int waitTimes = 0;
+        while (putId >= tOverflowCounter) {
             try {
                 Thread.sleep(1);
             } catch (InterruptedException e) {
                 e.printStackTrace();
             }
+            if (waitTimes++ > 1000) {
+                throw new RuntimeException("timeout");
+            }
+//            logger.info("Waited full buffer, time: " + (System.nanoTime() - putStart) / 1000 / 1000);
         }
-//        if (hasWait) {
-//            logger.info("Waited full buffer, time: " + (System.nanoTime() - putStart));
-//        }
 
         int roundId = putId % TOTAL_MEM_BUFFER_SIZE;
         MemBuffer memBuffer = memBufferList[roundId / MAX_MEM_BUFFER_SIZE];
@@ -296,6 +295,7 @@ public class NewMessageStoreImpl extends MessageStore {
             index--;
         }
         persistBufferIndex = index + 1;
+        tOverflowCounter = tIndexCounter + TOTAL_MEM_BUFFER_SIZE;
 
         if (persistId % PERSIST_SAMPLE_RATE == 0) {
             logger.info("Done persisting memTable with size: " + size

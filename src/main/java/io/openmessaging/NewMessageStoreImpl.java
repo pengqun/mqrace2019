@@ -109,7 +109,7 @@ public class NewMessageStoreImpl extends MessageStore {
             _putStart = System.currentTimeMillis();
         }
         if (IS_TEST_RUN && putId == 10000 * 10000) {
-            throw new RuntimeException("" + (System.currentTimeMillis() - _putStart));
+            throw new RuntimeException("" + (System.currentTimeMillis() - _putStart) + ", " + tIndexCounter);
         }
 //        if (putId % PUT_SAMPLE_RATE == 0) {
 //            logger.info("Before add, time: " + (System.nanoTime() - putStart));

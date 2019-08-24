@@ -8,8 +8,12 @@ import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
-import java.util.*;
-import java.util.concurrent.*;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+import java.util.TreeSet;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -33,16 +37,16 @@ public class LsmMessageStoreImpl extends MessageStore {
     private static final int DATA_SEGMENT_SIZE = 4 * 1024;
 //    private static final int DATA_SEGMENT_SIZE = 99 * 1000;
 
-    private static final int MAX_CACHE_SIZE = 1024 * 1024;
+    private static final int COMPRESS_BLOCK_SIZE = 1024;
 
     // TODO split into multiple indexes
     private static final int T_INDEX_SIZE = 1200 * 1024 * 1024;
     private static final int T_INDEX_SUMMARY_FACTOR = 64;
 
-    private static final int WRITE_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 1024 * 10;
-    private static final int READ_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 1024 * 10;
+    private static final int WRITE_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 1024;
+    private static final int READ_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 1024 * 8;
 
-    private static final int WRITE_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 1024 * 10;
+    private static final int WRITE_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 1024;
     private static final int READ_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 1024;
 
     private static final int PERSIST_SAMPLE_RATE = 100;
@@ -52,6 +56,9 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     private static List<DataFile> dataFileList = new ArrayList<>();
     private static DataFile curDataFile = null;
+
+    private static ByteBuffer aBufferForWrite = ByteBuffer.allocateDirect(WRITE_A_BUFFER_SIZE);
+    private static ByteBuffer bodyBufferForWrite = ByteBuffer.allocateDirect(WRITE_BODY_BUFFER_SIZE);
 
     static {
         logger.info("LsmMessageStoreImpl load start");
@@ -89,8 +96,6 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     private AtomicInteger threadIdCounter = new AtomicInteger(0);
     private ThreadLocal<Integer> threadId = ThreadLocal.withInitial(() -> threadIdCounter.getAndIncrement());
-
-    private Map<Integer, List<Long>> aCache = new HashMap<>();
 
     @Override
     public void put(Message message) {
@@ -333,9 +338,7 @@ public class LsmMessageStoreImpl extends MessageStore {
             }
         }
 
-        ArrayList<Message> result = new ArrayList<>(1024);
-        long skip = 0;
-
+        ArrayList<Message> result = new ArrayList<>(10240);
         ByteBuffer aByteBufferForRead = threadBufferForReadA.get();
         ByteBuffer bodyByteBufferForRead = threadBufferForReadBody.get();
         aByteBufferForRead.flip();
@@ -351,18 +354,6 @@ public class LsmMessageStoreImpl extends MessageStore {
                     fillReadABuffer(aByteBufferForRead, offset);
                 }
                 long a = aByteBufferForRead.getLong();
-//                if (a > aMax) {
-//                    offset += msgCount;
-//                    skip += msgCount;
-//                    if (msgCount > 1) {
-//                        aByteBufferForRead.position(aByteBufferForRead.position()
-//                                + Math.min(aByteBufferForRead.remaining(), (msgCount - 1) * KEY_A_BYTE_LENGTH));
-//                    }
-//                    bodyByteBufferForRead.position(bodyByteBufferForRead.position()
-//                            + Math.min(bodyByteBufferForRead.remaining(), msgCount * BODY_BYTE_LENGTH));
-//                    break;
-//                }
-//                if (a >= aMin) {
                 if (a >= aMin && a <= aMax) {
                     if (!bodyByteBufferForRead.hasRemaining()) {
                         fillReadBodyBuffer(bodyByteBufferForRead, offset);
@@ -374,7 +365,6 @@ public class LsmMessageStoreImpl extends MessageStore {
                 } else {
                     bodyByteBufferForRead.position(bodyByteBufferForRead.position()
                             + Math.min(bodyByteBufferForRead.remaining(), BODY_BYTE_LENGTH));
-                    skip++;
                 }
                 offset++;
                 msgCount--;
@@ -388,27 +378,16 @@ public class LsmMessageStoreImpl extends MessageStore {
             getMsgCounter.addAndGet(result.size());
         }
         if (getId % GET_SAMPLE_RATE == 0) {
-            logger.info("Return sorted result with size: " + result.size() + ", skip: " + skip
+            logger.info("Return sorted result with size: " + result.size()
                     + ", time: " + (System.currentTimeMillis() - getStart) + ", getId: " + getId);
         }
         return result;
     }
 
-    private short[] tHit = new short[200 * 1024 * 1024];
-
     @Override
     public long getAvgValue(long aMin, long aMax, long tMin, long tMax) {
         long avgStart = System.currentTimeMillis();
         int avgId = avgCounter.getAndIncrement();
-
-        if (avgId < 10000) {
-            logger.info("getAvgValue - tMin: " + (tMin - tBase) + ", tMax: " + (tMax - tBase)
-                    + ", tRange: " + (tMax - tMin)
-                    + ", aMin: " + aMin + ", aMax: " + aMax
-                    + ", aRange: " + (aMax - aMin)
-                    + ", avgId: " + avgId);
-        }
-
         if (IS_TEST_RUN && avgId == 0) {
             _getEnd = System.currentTimeMillis();
             _avgStart = _getEnd;
@@ -430,34 +409,11 @@ public class LsmMessageStoreImpl extends MessageStore {
                         + "\tavg: " + avgMsgCounter.get() + " / " + avgDuration + "ms = " + avgScore + "\n"
                         + "\ttotal: " + totalScore + "\n"
                 );
-                int negative = 0;
-                int nonzero = 0;
-                long total = 0;
-                int minHit = Integer.MAX_VALUE;
-                int maxHit = Integer.MIN_VALUE;
-                for (int i = 0; i < tHit.length; i++) {
-                    int hit = tHit[i];
-                    if (hit < 0) {
-                        negative++;
-                        continue;
-                    }
-                    if (hit > 0) {
-                        nonzero++;
-                        total += hit;
-                        minHit = Math.min(minHit, hit);
-                        maxHit = Math.max(maxHit, hit);
-                    }
-                }
-                logger.info("Hit result: \n"
-                        + "\tnegative: " + negative + ", nonzero: " + nonzero + ", total: " + total
-                        + "\tavg: " + ((double) total / nonzero) + ", min: " + minHit + ", max: " + maxHit);
-
                 throw new RuntimeException(putScore + "/" + getScore + "/" + avgScore);
             }
         }
         long sum = 0;
         int count = 0;
-//        long skip = 0;
 
         ByteBuffer aByteBufferForRead = threadBufferForReadA.get();
         aByteBufferForRead.flip();
@@ -467,31 +423,15 @@ public class LsmMessageStoreImpl extends MessageStore {
 
         for (long t = tMin; t <= tMax; t++) {
             int msgCount = tIndex[tDiff++];
-            if (tDiff < tHit.length) {
-                tHit[tDiff]++;
-            }
             while (msgCount > 0) {
                 if (aByteBufferForRead.remaining() == 0) {
                     fillReadABuffer(aByteBufferForRead, offset);
                 }
                 long a = aByteBufferForRead.getLong();
-//                if (a > aMax) {
-//                    offset += msgCount;
-//                    skip += msgCount;
-//                    if (msgCount > 1) {
-//                        aByteBufferForRead.position(aByteBufferForRead.position()
-//                                + Math.min(aByteBufferForRead.remaining(), (msgCount - 1) * KEY_A_BYTE_LENGTH));
-//                    }
-//                    break;
-//                }
-//                if (a >= aMin) {
                 if (a >= aMin && a <= aMax) {
                     sum += a;
                     count++;
                 }
-//                else {
-//                    skip++;
-//                }
                 offset++;
                 msgCount--;
             }
@@ -499,7 +439,7 @@ public class LsmMessageStoreImpl extends MessageStore {
         aByteBufferForRead.clear();
 
         if (avgId % AVG_SAMPLE_RATE == 0) {
-            logger.info("Got " + count // + ", skip: " + skip
+            logger.info("Got " + count
                     + ", time: " + (System.currentTimeMillis() - avgStart));
         }
         if (IS_TEST_RUN) {
@@ -604,8 +544,6 @@ public class LsmMessageStoreImpl extends MessageStore {
         RandomAccessFile bodyFile;
         FileChannel aChannel;
         FileChannel bodyChannel;
-        ByteBuffer aBufferForWrite = ByteBuffer.allocateDirect(WRITE_A_BUFFER_SIZE);
-        ByteBuffer bodyBufferForWrite = ByteBuffer.allocateDirect(WRITE_BODY_BUFFER_SIZE);
 
         void writeA(long a) {
             if (!aBufferForWrite.hasRemaining()) {

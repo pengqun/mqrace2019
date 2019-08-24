@@ -127,7 +127,7 @@ public class NewMessageStoreImpl extends MessageStore {
             } catch (InterruptedException e) {
                 e.printStackTrace();
             }
-            if (waitTimes++ > 1000) {
+            if (waitTimes++ > 5000) {
                 throw new RuntimeException("timeout");
             }
 //            logger.info("Waited full buffer, time: " + (System.nanoTime() - putStart) / 1000 / 1000);
@@ -295,7 +295,6 @@ public class NewMessageStoreImpl extends MessageStore {
             index--;
         }
         persistBufferIndex = index + 1;
-        tOverflowCounter = tIndexCounter + TOTAL_MEM_BUFFER_SIZE;
 
         if (persistId % PERSIST_SAMPLE_RATE == 0) {
             logger.info("Done persisting memTable with size: " + size
@@ -624,8 +623,10 @@ public class NewMessageStoreImpl extends MessageStore {
         void addMessage(Message message, int index) {
             buffer[index] = message;
             tCurrent[threadId.get()] = message.getT();
-            if (size.incrementAndGet() == MAX_MEM_BUFFER_SIZE) {
-                size.set(0);
+            if (size.incrementAndGet() >= MAX_MEM_BUFFER_SIZE) {
+                if (size.get() > MAX_MEM_BUFFER_SIZE) {
+                    throw new RuntimeException("mem buffer overflow");
+                }
                 persistThreadPool.execute(() -> {
                     long currentMinT = tCurrent[0];
                     for (int i = 1; i < tCurrent.length; i++) {
@@ -637,6 +638,8 @@ public class NewMessageStoreImpl extends MessageStore {
                         logger.info("Failed to persist mem table", e);
                         System.exit(-1);
                     }
+                    size.set(0);
+                    tOverflowCounter += MAX_MEM_BUFFER_SIZE;
                 });
             }
         }

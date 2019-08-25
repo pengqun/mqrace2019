@@ -29,8 +29,6 @@ public class NewMessageStoreImpl extends MessageStore {
     private static final int MSG_COUNT_UPPER_LIMIT = Integer.MAX_VALUE;
 
     private static final int MAX_MEM_BUFFER_SIZE = 128 * 1024;
-    private static final int NUM_MEM_BUFFER = 1;
-    private static final int TOTAL_MEM_BUFFER_SIZE = NUM_MEM_BUFFER * MAX_MEM_BUFFER_SIZE;
 
     private static final int PERSIST_BUFFER_SIZE = 4 * 1024 * 1024;
 
@@ -47,8 +45,8 @@ public class NewMessageStoreImpl extends MessageStore {
     private static final int WRITE_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 1024;
     private static final int READ_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 1024;
 
-    private static final int PERSIST_SAMPLE_RATE = 1;
-    private static final int PUT_SAMPLE_RATE = 10000;
+    private static final int PERSIST_SAMPLE_RATE = 100;
+    private static final int PUT_SAMPLE_RATE = 10000000;
     private static final int GET_SAMPLE_RATE = 1000;
     private static final int AVG_SAMPLE_RATE = 1000;
 
@@ -58,10 +56,10 @@ public class NewMessageStoreImpl extends MessageStore {
     private static ByteBuffer aBufferForWrite = ByteBuffer.allocateDirect(WRITE_A_BUFFER_SIZE);
     private static ByteBuffer bodyBufferForWrite = ByteBuffer.allocateDirect(WRITE_BODY_BUFFER_SIZE);
 
-    private static MemBuffer[] memBufferList = new MemBuffer[NUM_MEM_BUFFER];
-
+    private static MemBuffer memBuffer = new MemBuffer();
     private static AtomicInteger threadIdCounter = new AtomicInteger(0);
     private static ThreadLocal<Integer> threadId = ThreadLocal.withInitial(() -> threadIdCounter.getAndIncrement());
+    private static int bufferOverflowLimit = MAX_MEM_BUFFER_SIZE;
 
     private static ThreadPoolExecutor persistThreadPool = (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
 
@@ -71,8 +69,6 @@ public class NewMessageStoreImpl extends MessageStore {
     private static int persistCounter = 0;
     private static int dataFileCounter = 0;
 
-//    private volatile Collection<Message> memTable = createMemTable();
-
     private static Message[] persistBuffer1 = new Message[PERSIST_BUFFER_SIZE];
     private static Message[] persistBuffer2 = new Message[PERSIST_BUFFER_SIZE];
     private static int persistBufferIndex = 0;
@@ -80,9 +76,7 @@ public class NewMessageStoreImpl extends MessageStore {
 
     private static short[] tIndex = new short[T_INDEX_SIZE];
     private static int[] tIndexSummary = new int[T_INDEX_SIZE / T_INDEX_SUMMARY_FACTOR];
-//    private long[] tCurrent = new long[PRODUCER_THREAD_NUM];
     private static int tIndexCounter = 0;
-    private static int tOverflowCounter = TOTAL_MEM_BUFFER_SIZE;
     private static long tBase = -1;
 
     private static long maxBufferIndex = Long.MIN_VALUE;
@@ -96,9 +90,6 @@ public class NewMessageStoreImpl extends MessageStore {
 
     static {
         logger.info("LsmMessageStoreImpl load start");
-        for (int i = 0; i < NUM_MEM_BUFFER; i++) {
-            memBufferList[i] = new MemBuffer(i);
-        }
         logger.info("LsmMessageStoreImpl load end");
     }
 
@@ -116,12 +107,8 @@ public class NewMessageStoreImpl extends MessageStore {
 //            logger.info("Before add, time: " + (System.nanoTime() - putStart));
 //        }
 
-//        synchronized (this) {
-//            memTable.add(message);
-//        }
-
         int waitTimes = 0;
-        while (putId >= tOverflowCounter) {
+        while (putId >= bufferOverflowLimit) {
             try {
                 Thread.sleep(1);
             } catch (InterruptedException e) {
@@ -133,58 +120,13 @@ public class NewMessageStoreImpl extends MessageStore {
 //            logger.info("Waited full buffer, time: " + (System.nanoTime() - putStart) / 1000 / 1000);
         }
 
-        int roundId = putId % TOTAL_MEM_BUFFER_SIZE;
-        MemBuffer memBuffer = memBufferList[roundId / MAX_MEM_BUFFER_SIZE];
-        memBuffer.addMessage(message, roundId % MAX_MEM_BUFFER_SIZE);
+        memBuffer.addMessage(message, putId % MAX_MEM_BUFFER_SIZE);
 
         if (putId % PUT_SAMPLE_RATE == 0) {
             logger.info("Put message to memTable with t: " + message.getT() + ", a: " + message.getA()
                     + ", time: " + (System.nanoTime() - putStart) + ", putId: " + putId);
         }
-
-//        tCurrent[threadId.get()] = message.getT();
-//
-//        if ((putId + 1) % MAX_MEM_BUFFER_SIZE == 0) {
-////            logger.info("Submit memTable persist task, putId: " + putId);
-//            long currentMinT = tCurrent[0];
-//            for (int i = 1; i < tCurrent.length; i++) {
-//                currentMinT = Math.min(currentMinT, tCurrent[i]);
-//            }
-//            long finalCurrentMinT = currentMinT;
-//
-//            Collection<Message> frozenMemTable;
-//            synchronized (this) {
-//                frozenMemTable = memTable;
-//                memTable = createMemTable();
-//            }
-//
-//            persistThreadPool.execute(() -> {
-//                try {
-//                    persistMemTable(frozenMemTable, finalCurrentMinT);
-//                } catch (Exception e) {
-//                    logger.info("Failed to persist mem table", e);
-//                    System.exit(-1);
-//                }
-//            });
-////            logger.info("Submitted memTable persist task, time: "
-////                    + (System.currentTimeMillis() - putStart) + ", putId: " + putId);
-//        }
-//        if (putId % PUT_SAMPLE_RATE == 0) {
-//            logger.info("Done put, time: " + (System.nanoTime() - putStart));
-//        }
     }
-
-//    private Collection<Message> createMemTable() {
-////        return new ConcurrentSkipListSet<>((m1, m2) -> {
-//        return new TreeSet<>((m1, m2) -> {
-//            if (m1.getT() == m2.getT()) {
-//                //noinspection ComparatorMethodParameterNotUsed
-//                return -1;
-//            }
-//            // Order by T desc
-//            return m2.getT() < m1.getT() ? -1 : 1;
-//        });
-//    }
 
     private static void persistMemTable(Message[] memInternalBuffer, int size, long currentMinT) {
         long persistStart = System.currentTimeMillis();
@@ -253,13 +195,6 @@ public class NewMessageStoreImpl extends MessageStore {
                     // TODO store overflowed count to additional map
                     throw new RuntimeException("A count is larger than short max");
                 }
-
-//                // sort by a
-//                if (msgCount > 1) {
-//                    msgBuffer.sort(Comparator.comparingLong(Message::getA));
-//                    sortCount += msgCount;
-//                    sortTimes++;
-//                }
 
                 // store a and body
                 for (Message message : msgBuffer) {
@@ -333,13 +268,11 @@ public class NewMessageStoreImpl extends MessageStore {
                 }
             }
             logger.info("Flushing remaining mem buffers");
-            for (int i = 0; i < memBufferList.length; i++) {
-                int bufferSize = memBufferList[i].size.get();
-                if (bufferSize > 0) {
-                    persistMemTable(memBufferList[i].buffer, bufferSize, T_UPPER_LIMIT);
-                    logger.info("Flushed mem buffer " + i);
-                }
+            int bufferSize = memBuffer.size.get();
+            if (bufferSize > 0) {
+                persistMemTable(memBuffer.buffer, bufferSize, T_UPPER_LIMIT);
             }
+            logger.info("Flushed last mem buffer with size: " + bufferSize);
 
             curDataFile.flushABuffer();
             curDataFile.flushBodyBuffer();
@@ -616,21 +549,16 @@ public class NewMessageStoreImpl extends MessageStore {
     }
 
     private static class MemBuffer {
-        int id;
         Message[] buffer = new Message[MAX_MEM_BUFFER_SIZE];
         AtomicInteger size = new AtomicInteger(0);
         long[] tCurrent = new long[PRODUCER_THREAD_NUM];
-
-        public MemBuffer(int id) {
-            this.id = id;
-        }
 
         void addMessage(Message message, int index) {
             buffer[index] = message;
             tCurrent[threadId.get()] = message.getT();
             if (size.incrementAndGet() >= MAX_MEM_BUFFER_SIZE) {
                 if (size.get() > MAX_MEM_BUFFER_SIZE) {
-                    logger.info("size: " + size.get() + ", tOverflowCounter: " + tOverflowCounter);
+                    logger.info("size: " + size.get() + ", tOverflowCounter: " + bufferOverflowLimit);
                     throw new RuntimeException("mem buffer overflow");
                 }
                 persistThreadPool.execute(() -> {
@@ -638,7 +566,6 @@ public class NewMessageStoreImpl extends MessageStore {
                     for (int i = 1; i < tCurrent.length; i++) {
                         currentMinT = Math.min(currentMinT, tCurrent[i]);
                     }
-                    logger.info("Persist mem buffer: " + id);
                     try {
                         persistMemTable(buffer, MAX_MEM_BUFFER_SIZE, currentMinT);
                     } catch (Exception e) {
@@ -646,8 +573,7 @@ public class NewMessageStoreImpl extends MessageStore {
                         System.exit(-1);
                     }
                     size.set(0);
-                    logger.info("Persisted mem buffer: " + id);
-                    tOverflowCounter += MAX_MEM_BUFFER_SIZE;
+                    bufferOverflowLimit += MAX_MEM_BUFFER_SIZE;
                 });
             }
         }

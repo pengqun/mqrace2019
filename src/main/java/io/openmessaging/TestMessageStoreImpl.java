@@ -54,9 +54,14 @@ public class TestMessageStoreImpl extends MessageStore {
         long a = message.getA();
         byte[] body = message.getBody();
 
-        StringBuilder sb = new StringBuilder();
-        for (byte b : body) {
-            sb.append(b).append("-");
+        StringBuilder sb = new StringBuilder("{");
+        for (int i = 0; i < body.length; i++) {
+            sb.append(body[i]);
+            if (i < body.length - 1) {
+                sb.append(", ");
+            } else {
+                sb.append("}");
+            }
         }
         System.out.println(sb);
 

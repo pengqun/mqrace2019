@@ -122,11 +122,11 @@ public class NewMessageStoreImpl extends MessageStore {
 
 //        int waitTimes = 0;
         while (putId >= bufferOverflowLimit) {
-            try {
-                Thread.sleep(2);
-            } catch (InterruptedException e) {
-                e.printStackTrace();
-            }
+//            try {
+//                Thread.sleep(2);
+//            } catch (InterruptedException e) {
+//                e.printStackTrace();
+//            }
 //            if (waitTimes++ > 5000) {
 //                throw new RuntimeException("timeout");
 //            }
@@ -586,6 +586,9 @@ public class NewMessageStoreImpl extends MessageStore {
                         System.exit(-1);
                     }
                     size.set(0);
+//                    synchronized (bufferAvailableLock) {
+//                        bufferAvailableLock.notifyAll();
+//                    }
                     bufferOverflowLimit += MAX_MEM_BUFFER_SIZE;
                 });
             }

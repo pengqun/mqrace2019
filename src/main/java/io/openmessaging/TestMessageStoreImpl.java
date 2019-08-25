@@ -1,6 +1,7 @@
 package io.openmessaging;
 
 
+import com.sun.javafx.binding.StringFormatter;
 import org.apache.log4j.Logger;
 
 import java.util.ArrayList;
@@ -46,16 +47,24 @@ public class TestMessageStoreImpl extends MessageStore {
 
     private long base = 0;
 
+//    private List<byte[]> bodyBuffer = new ArrayList<>();
+
     @Override
     public synchronized void put(Message message) {
         long t = message.getT();
         long a = message.getA();
         byte[] body = message.getBody();
 
+        StringBuilder sb = new StringBuilder();
+        for (byte b : body) {
+            sb.append(b).append("-");
+        }
+        System.out.println(sb);
+
         int id = totalCount++;
-//        if (totalCount < 100000) {
-//            logger.info("t - " + t + ", a - " + a + ", body.length - " + body.length);
-//        }
+        if (totalCount == 128) {
+            throw new RuntimeException("quit");
+        }
 
         if (id == 0) {
             base = t - 10000;

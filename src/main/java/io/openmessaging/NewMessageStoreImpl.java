@@ -286,7 +286,7 @@ public class NewMessageStoreImpl extends MessageStore {
             long a = byteBuffer.getLong();
             byte[] body = new byte[BODY_BYTE_LENGTH];
             byteBuffer.get(body);
-            Message message = new Message(t, a, body);
+            Message message = new Message(a, t, body);
 
             int bufferIndex = putCounter++ % MAX_MEM_BUFFER_SIZE;
             memBuffer[bufferIndex] = message;

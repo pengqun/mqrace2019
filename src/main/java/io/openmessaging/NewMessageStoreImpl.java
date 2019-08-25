@@ -30,7 +30,7 @@ public class NewMessageStoreImpl extends MessageStore {
 
     private static final int MAX_MEM_BUFFER_SIZE = 2 * 128 * 1024;
 
-    private static final int PERSIST_BUFFER_SIZE = 4 * 1024 * 1024;
+    private static final int PERSIST_BUFFER_SIZE = 2 * 1024 * 1024;
 
     private static final int DATA_SEGMENT_SIZE = 4 * 1024 * 1024;
 //    private static final int DATA_SEGMENT_SIZE = 99 * 1000;
@@ -60,6 +60,7 @@ public class NewMessageStoreImpl extends MessageStore {
     private static AtomicInteger threadIdCounter = new AtomicInteger(0);
     private static ThreadLocal<Integer> threadId = ThreadLocal.withInitial(() -> threadIdCounter.getAndIncrement());
     private static int bufferOverflowLimit = MAX_MEM_BUFFER_SIZE;
+    private static final Object bufferAvailableLock = new Object();
 
     private static ThreadPoolExecutor persistThreadPool = (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
 
@@ -100,9 +101,9 @@ public class NewMessageStoreImpl extends MessageStore {
         if (IS_TEST_RUN && putId == 0) {
             _putStart = System.currentTimeMillis();
         }
-//        if (IS_TEST_RUN && putId == 10000 * 10000) {
-//            throw new RuntimeException("" + (System.currentTimeMillis() - _putStart) + ", " + tIndexCounter);
-//        }
+        if (IS_TEST_RUN && putId == 10000 * 10000) {
+            throw new RuntimeException("" + (System.currentTimeMillis() - _putStart) + ", " + tIndexCounter);
+        }
 //        if (putId % PUT_SAMPLE_RATE == 0) {
 //            logger.info("Before add, time: " + (System.nanoTime() - putStart));
 //        }

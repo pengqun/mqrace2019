@@ -84,7 +84,23 @@ public class NewMessageStoreImpl extends MessageStore {
     private ThreadLocal<ByteBuffer> threadBufferForReadBody = ThreadLocal.withInitial(()
             -> ByteBuffer.allocateDirect(READ_BODY_BUFFER_SIZE));
 
+    private static RandomAccessFile[] stageFileList = new RandomAccessFile[PRODUCER_THREAD_NUM];
+    private static FileChannel[] stageChannelList = new FileChannel[PRODUCER_THREAD_NUM];
+
+    private ThreadLocal<ByteBuffer> threadBufferForWriteStage = ThreadLocal.withInitial(()
+            -> ByteBuffer.allocateDirect(MSG_BYTE_LENGTH * 1024));
+
     static {
+        for (int i = 0; i < PRODUCER_THREAD_NUM; i++) {
+            RandomAccessFile raf;
+            try {
+                raf = new RandomAccessFile(Constants.DATA_DIR + "s" + i + ".data", "rw");
+                stageFileList[i] = raf;
+                stageChannelList[i] = raf.getChannel();
+            } catch (FileNotFoundException e) {
+                e.printStackTrace();
+            }
+        }
         logger.info("LsmMessageStoreImpl loaded");
     }
 
@@ -95,9 +111,28 @@ public class NewMessageStoreImpl extends MessageStore {
         if (putId == 0) {
             _putStart = System.currentTimeMillis();
         }
-//        if (putId == 10000 * 10000) {
-//            throw new RuntimeException("" + (System.currentTimeMillis() - _putStart) + ", " + tIndexCounter);
-//        }
+        if (putId == 10000 * 10000) {
+            throw new RuntimeException("" + (System.currentTimeMillis() - _putStart) + ", " + tIndexCounter);
+        }
+
+        ByteBuffer byteBuffer = threadBufferForWriteStage.get();
+        if (!byteBuffer.hasRemaining()) {
+            byteBuffer.flip();
+            try {
+                stageChannelList[threadId.get()].write(byteBuffer);
+            } catch (IOException e) {
+                throw new RuntimeException("write error");
+            }
+            byteBuffer.clear();
+        }
+        byteBuffer.putLong(message.getT());
+        byteBuffer.putLong(message.getA());
+        byteBuffer.put(message.getBody());
+
+        if (true) {
+            return;
+        }
+
         while (putId >= bufferOverflowLimit) {
             LockSupport.parkNanos(1_000_000);
         }

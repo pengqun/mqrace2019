@@ -136,8 +136,7 @@ public class NewMessageStoreImpl extends MessageStore {
 //            } catch (InterruptedException e) {
 //                e.printStackTrace();
 //            }
-//            LockSupport.parkNanos(500_000);
-            LockSupport.parkNanos(1000_000);
+            LockSupport.parkNanos(500_000);
 //            if (waitTimes++ > 5000) {
 //                throw new RuntimeException("timeout");
 //            }

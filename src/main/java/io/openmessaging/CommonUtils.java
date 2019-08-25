@@ -9,7 +9,7 @@ import java.util.zip.GZIPOutputStream;
 import java.util.zip.InflaterOutputStream;
 
 /**
- * @author pengqun.pq 2019-08-01
+ * @author .ignore 2019-08-01
  */
 public class CommonUtils {
 

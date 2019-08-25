@@ -1,7 +1,7 @@
 package io.openmessaging;
 
 /**
- * @author pengqun.pq 2019/8/25
+ * @author .ignore 2019/8/25
  */
 public class MyTest {
 

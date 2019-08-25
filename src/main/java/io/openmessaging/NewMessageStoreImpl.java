@@ -131,12 +131,12 @@ public class NewMessageStoreImpl extends MessageStore {
 
 //        int waitTimes = 0;
         while (putId >= bufferOverflowLimit) {
-//            try {
-//                Thread.sleep(0, 500000);
-//            } catch (InterruptedException e) {
-//                e.printStackTrace();
-//            }
-            LockSupport.parkNanos(500_000);
+            try {
+                Thread.sleep(0, 500000);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+//            LockSupport.parkNanos(500_000);
 //            if (waitTimes++ > 5000) {
 //                throw new RuntimeException("timeout");
 //            }

@@ -30,7 +30,7 @@ public class NewMessageStoreImpl extends MessageStore {
     private static final int MSG_COUNT_UPPER_LIMIT = Integer.MAX_VALUE;
 
     private static final int MAX_MEM_BUFFER_SIZE = 16 * 1024;
-    private static final int PERSIST_BUFFER_SIZE = 1024 * 1024;
+    private static final int PERSIST_BUFFER_SIZE = 32 * 1024 * 1024;
     private static final int DATA_SEGMENT_SIZE = 4 * 1024 * 1024;
 //    private static final int DATA_SEGMENT_SIZE = 99 * 1000;
 
@@ -299,7 +299,7 @@ public class NewMessageStoreImpl extends MessageStore {
                 }
                 persistMemBuffer(memBuffer, MAX_MEM_BUFFER_SIZE, currentMinT);
             }
-            if (putCounter % PUT_SAMPLE_RATE == 0) {
+            if ((putCounter - 1) % REWRITE_SAMPLE_RATE == 0) {
                 logger.info("Put message to mem buffer: " + putCounter);
             }
         }
@@ -565,6 +565,7 @@ public class NewMessageStoreImpl extends MessageStore {
 
     private static final int PERSIST_SAMPLE_RATE = 1000;
     private static final int PUT_SAMPLE_RATE = 10000000;
+    private static final int REWRITE_SAMPLE_RATE = 1000000;
     private static final int GET_SAMPLE_RATE = 1000;
     private static final int AVG_SAMPLE_RATE = 1000;
 

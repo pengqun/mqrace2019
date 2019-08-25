@@ -28,7 +28,7 @@ public class NewMessageStoreImpl extends MessageStore {
     private static final long A_UPPER_LIMIT = Long.MAX_VALUE;
     private static final int MSG_COUNT_UPPER_LIMIT = Integer.MAX_VALUE;
 
-    private static final int MAX_MEM_BUFFER_SIZE = 64 * 1024;
+    private static final int MAX_MEM_BUFFER_SIZE = 32 * 1024;
 
     private static final int PERSIST_BUFFER_SIZE = 2 * 1024 * 1024;
 

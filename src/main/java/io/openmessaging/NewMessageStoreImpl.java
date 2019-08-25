@@ -28,7 +28,7 @@ public class NewMessageStoreImpl extends MessageStore {
     private static final long A_UPPER_LIMIT = Long.MAX_VALUE;
     private static final int MSG_COUNT_UPPER_LIMIT = Integer.MAX_VALUE;
 
-    private static final int MAX_MEM_BUFFER_SIZE = 32 * 1024;
+    private static final int MAX_MEM_BUFFER_SIZE = 16 * 1024;
 
     private static final int PERSIST_BUFFER_SIZE = 2 * 1024 * 1024;
 
@@ -106,6 +106,18 @@ public class NewMessageStoreImpl extends MessageStore {
         }
 //        if (putId % PUT_SAMPLE_RATE == 0) {
 //            logger.info("Before add, time: " + (System.nanoTime() - putStart));
+//        }
+
+//        if (putId >= bufferOverflowLimit) {
+//            synchronized (bufferAvailableLock) {
+//                while (putId >= bufferOverflowLimit) {
+//                    try {
+//                        bufferAvailableLock.wait();
+//                    } catch (InterruptedException e) {
+//                        e.printStackTrace();
+//                    }
+//                }
+//            }
 //        }
 
 //        int waitTimes = 0;

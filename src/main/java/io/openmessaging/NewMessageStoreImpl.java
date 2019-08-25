@@ -108,16 +108,16 @@ public class NewMessageStoreImpl extends MessageStore {
 //            logger.info("Before add, time: " + (System.nanoTime() - putStart));
 //        }
 
-        int waitTimes = 0;
+//        int waitTimes = 0;
         while (putId >= bufferOverflowLimit) {
             try {
                 Thread.sleep(1);
             } catch (InterruptedException e) {
                 e.printStackTrace();
             }
-            if (waitTimes++ > 5000) {
-                throw new RuntimeException("timeout");
-            }
+//            if (waitTimes++ > 5000) {
+//                throw new RuntimeException("timeout");
+//            }
 //            logger.info("Waited full buffer, time: " + (System.nanoTime() - putStart) / 1000 / 1000);
         }
 

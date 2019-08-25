@@ -1,7 +1,6 @@
 package io.openmessaging;
 
 
-import com.sun.javafx.binding.StringFormatter;
 import org.apache.log4j.Logger;
 
 import java.util.ArrayList;

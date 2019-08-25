@@ -114,17 +114,17 @@ public class NewMessageStoreImpl extends MessageStore {
 //        }
 
         if (putId >= bufferOverflowLimit) {
-            int waitTimes = 0;
+//            int waitTimes = 0;
             synchronized (bufferAvailableLock) {
                 while (putId >= bufferOverflowLimit) {
                     try {
-                        bufferAvailableLock.wait(1000);
+                        bufferAvailableLock.wait();
                     } catch (InterruptedException e) {
                         e.printStackTrace();
                     }
-                    if (waitTimes++ > 5) {
-                        throw new RuntimeException("timeout");
-                    }
+//                    if (waitTimes++ > 5) {
+//                        throw new RuntimeException("timeout");
+//                    }
                 }
             }
         }

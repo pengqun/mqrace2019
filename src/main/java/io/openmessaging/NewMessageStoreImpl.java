@@ -123,7 +123,7 @@ public class NewMessageStoreImpl extends MessageStore {
 //        int waitTimes = 0;
         while (putId >= bufferOverflowLimit) {
             try {
-                Thread.sleep(5);
+                Thread.sleep(2);
             } catch (InterruptedException e) {
                 e.printStackTrace();
             }

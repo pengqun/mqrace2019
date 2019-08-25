@@ -113,45 +113,38 @@ public class NewMessageStoreImpl extends MessageStore {
 //            logger.info("Before add, time: " + (System.nanoTime() - putStart));
 //        }
 
-//        if (putId >= bufferOverflowLimit) {
-//            int waitTimes = 0;
-//            synchronized (bufferAvailableLock) {
-//                while (putId >= bufferOverflowLimit) {
-//                    try {
-//                        bufferAvailableLock.wait(1000);
-//                    } catch (InterruptedException e) {
-//                        e.printStackTrace();
-//                    }
-//                    if (waitTimes++ > 5) {
-//                        throw new RuntimeException("timeout");
-//                    }
-//                }
-//            }
-//        }
-
-//        int waitTimes = 0;
-        while (putId >= bufferOverflowLimit) {
-            try {
-                Thread.sleep(0, 500000);
-            } catch (InterruptedException e) {
-                e.printStackTrace();
+        if (putId >= bufferOverflowLimit) {
+            int waitTimes = 0;
+            synchronized (bufferAvailableLock) {
+                while (putId >= bufferOverflowLimit) {
+                    try {
+                        bufferAvailableLock.wait(1000);
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                    if (waitTimes++ > 5) {
+                        throw new RuntimeException("timeout");
+                    }
+                }
             }
-//            LockSupport.parkNanos(500_000);
-//            if (waitTimes++ > 5000) {
-//                throw new RuntimeException("timeout");
-//            }
-//            logger.info("Waited full buffer, time: " + (System.nanoTime() - putStart) / 1000 / 1000);
         }
 
-        memBuffer[putId % MAX_MEM_BUFFER_SIZE] = message;
+////        int waitTimes = 0;
+//        while (putId >= bufferOverflowLimit) {
+//            LockSupport.parkNanos(10_000_000);
+////            if (waitTimes++ > 5000) {
+////                throw new RuntimeException("timeout");
+////            }
+//        }
 
+        memBuffer[putId % MAX_MEM_BUFFER_SIZE] = message;
         tCurrent[threadId.get()] = message.getT();
 
         if (memBufferSize.incrementAndGet() == MAX_MEM_BUFFER_SIZE) {
-//            if (memBufferSize.get() > MAX_MEM_BUFFER_SIZE) {
-//                logger.info("memBufferSize: " + memBufferSize.get() + ", tOverflowCounter: " + bufferOverflowLimit);
-//                throw new RuntimeException("mem buffer overflow");
-//            }
+            if (memBufferSize.get() > MAX_MEM_BUFFER_SIZE) {
+                logger.info("memBufferSize: " + memBufferSize.get() + ", tOverflowCounter: " + bufferOverflowLimit);
+                throw new RuntimeException("mem buffer overflow");
+            }
             persistThreadPool.execute(() -> {
                 long currentMinT = tCurrent[0];
                 for (int i = 1; i < tCurrent.length; i++) {
@@ -164,10 +157,10 @@ public class NewMessageStoreImpl extends MessageStore {
                     System.exit(-1);
                 }
                 memBufferSize.set(0);
-//                synchronized (bufferAvailableLock) {
+                synchronized (bufferAvailableLock) {
                     bufferOverflowLimit += MAX_MEM_BUFFER_SIZE;
-//                    bufferAvailableLock.notifyAll();
-//                }
+                    bufferAvailableLock.notifyAll();
+                }
             });
         }
 

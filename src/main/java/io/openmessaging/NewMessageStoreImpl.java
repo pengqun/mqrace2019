@@ -29,7 +29,7 @@ public class NewMessageStoreImpl extends MessageStore {
     private static final long A_UPPER_LIMIT = Long.MAX_VALUE;
     private static final int MSG_COUNT_UPPER_LIMIT = Integer.MAX_VALUE;
 
-    private static final int MAX_MEM_BUFFER_SIZE = 10 * 1024;
+    private static final int MAX_MEM_BUFFER_SIZE = 16 * 1024;
     private static final int PERSIST_BUFFER_SIZE = 1024 * 1024;
     private static final int DATA_SEGMENT_SIZE = 4 * 1024 * 1024;
 //    private static final int DATA_SEGMENT_SIZE = 99 * 1000;
@@ -39,62 +39,53 @@ public class NewMessageStoreImpl extends MessageStore {
     private static final int T_INDEX_SUMMARY_FACTOR = 32;
 
     private static final int WRITE_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 1024;
-    private static final int READ_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 512;
-
+    private static final int READ_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 2048;
     private static final int WRITE_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 1024;
-    private static final int READ_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 128;
+    private static final int READ_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 512;
 
-    private static final int PERSIST_SAMPLE_RATE = 1000;
-    private static final int PUT_SAMPLE_RATE = 10000000;
-    private static final int GET_SAMPLE_RATE = 1000;
-    private static final int AVG_SAMPLE_RATE = 1000;
+    private List<DataFile> dataFileList = new ArrayList<>();
+    private DataFile curDataFile = null;
 
-    private static List<DataFile> dataFileList = new ArrayList<>();
-    private static DataFile curDataFile = null;
+    private ByteBuffer aBufferForWrite = ByteBuffer.allocateDirect(WRITE_A_BUFFER_SIZE);
+    private ByteBuffer bodyBufferForWrite = ByteBuffer.allocateDirect(WRITE_BODY_BUFFER_SIZE);
 
-    private static ByteBuffer aBufferForWrite = ByteBuffer.allocateDirect(WRITE_A_BUFFER_SIZE);
-    private static ByteBuffer bodyBufferForWrite = ByteBuffer.allocateDirect(WRITE_BODY_BUFFER_SIZE);
+    private Message[] memBuffer = new Message[MAX_MEM_BUFFER_SIZE];
+    private AtomicInteger memBufferSize = new AtomicInteger(0);
+    private long[] tCurrent = new long[PRODUCER_THREAD_NUM];
+    private int bufferOverflowLimit = MAX_MEM_BUFFER_SIZE;
+    private ThreadPoolExecutor persistThreadPool = (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
 
-    private static Message[] memBuffer = new Message[MAX_MEM_BUFFER_SIZE];
-    private static AtomicInteger memBufferSize = new AtomicInteger(0);
-    private static long[] tCurrent = new long[PRODUCER_THREAD_NUM];
+    private AtomicInteger threadIdCounter = new AtomicInteger(0);
+    private ThreadLocal<Integer> threadId = ThreadLocal.withInitial(() -> threadIdCounter.getAndIncrement());
 
-    private static AtomicInteger threadIdCounter = new AtomicInteger(0);
-    private static ThreadLocal<Integer> threadId = ThreadLocal.withInitial(() -> threadIdCounter.getAndIncrement());
+    private AtomicInteger putCounter = new AtomicInteger(0);
+    private AtomicInteger getCounter = new AtomicInteger(0);
+    private AtomicInteger avgCounter = new AtomicInteger(0);
+    private int persistCounter = 0;
+    private int dataFileCounter = 0;
+    private volatile boolean firstGet = true;
 
-    private static int bufferOverflowLimit = MAX_MEM_BUFFER_SIZE;
+    private Message[] persistBuffer1 = new Message[PERSIST_BUFFER_SIZE];
+    private Message[] persistBuffer2 = new Message[PERSIST_BUFFER_SIZE];
+    private Message[] tLineBuffer = new Message[Short.MAX_VALUE];
+    private int persistBufferIndex = 0;
+    private int tLineBufferSize = 0;
+    private volatile boolean persistDone = false;
 
-    private static ThreadPoolExecutor persistThreadPool = (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
+    private short[] tIndex = new short[T_INDEX_SIZE];
+    private int[] tIndexSummary = new int[T_INDEX_SIZE / T_INDEX_SUMMARY_FACTOR];
+    private int tIndexCounter = 0;
+    private long tBase = -1;
 
-    private static AtomicInteger putCounter = new AtomicInteger(0);
-    private static AtomicInteger getCounter = new AtomicInteger(0);
-    private static AtomicInteger avgCounter = new AtomicInteger(0);
-    private static int persistCounter = 0;
-    private static int dataFileCounter = 0;
-    private static volatile boolean firstGet = true;
+    private Message sentinelMessage = new Message(T_UPPER_LIMIT, A_UPPER_LIMIT, null);
 
-    private static Message[] persistBuffer1 = new Message[PERSIST_BUFFER_SIZE];
-    private static Message[] persistBuffer2 = new Message[PERSIST_BUFFER_SIZE];
-    private static int persistBufferIndex = 0;
-    private static volatile boolean persistDone = false;
-
-    private static short[] tIndex = new short[T_INDEX_SIZE];
-    private static int[] tIndexSummary = new int[T_INDEX_SIZE / T_INDEX_SUMMARY_FACTOR];
-    private static int tIndexCounter = 0;
-    private static long tBase = -1;
-
-    private static long maxBufferIndex = Long.MIN_VALUE;
-
-    private static Message sentinelMessage = new Message(T_UPPER_LIMIT, A_UPPER_LIMIT, null);
-
-    private static ThreadLocal<ByteBuffer> threadBufferForReadA = ThreadLocal.withInitial(()
+    private ThreadLocal<ByteBuffer> threadBufferForReadA = ThreadLocal.withInitial(()
             -> ByteBuffer.allocateDirect(READ_A_BUFFER_SIZE));
-    private static ThreadLocal<ByteBuffer> threadBufferForReadBody = ThreadLocal.withInitial(()
+    private ThreadLocal<ByteBuffer> threadBufferForReadBody = ThreadLocal.withInitial(()
             -> ByteBuffer.allocateDirect(READ_BODY_BUFFER_SIZE));
 
     static {
-        logger.info("LsmMessageStoreImpl load start");
-//        logger.info("LsmMessageStoreImpl load end");
+        logger.info("LsmMessageStoreImpl loaded");
     }
 
     @Override
@@ -139,7 +130,7 @@ public class NewMessageStoreImpl extends MessageStore {
         }
     }
 
-    private static void persistMemTable(int size, long currentMinT) {
+    private void persistMemTable(int size, long currentMinT) {
         long persistStart = System.currentTimeMillis();
         int persistId = persistCounter++;
         if (persistId % PERSIST_SAMPLE_RATE == 0) {
@@ -171,7 +162,7 @@ public class NewMessageStoreImpl extends MessageStore {
         }
         persistBufferIndex = j;
 
-        maxBufferIndex = Math.max(maxBufferIndex, persistBufferIndex);
+//        maxBufferIndex = Math.max(maxBufferIndex, persistBufferIndex);
 
         if (persistId % PERSIST_SAMPLE_RATE == 0) {
             logger.info("Copied memTable with size: " + size + " to buffer with index: " + persistBufferIndex
@@ -190,26 +181,21 @@ public class NewMessageStoreImpl extends MessageStore {
 
         int index = persistBufferIndex - 1;
         long lastT = targetBuffer[index].getT();
-        List<Message> msgBuffer = new ArrayList<>();
 
         while (true) {
             Message msg = index >= 0 ? targetBuffer[index] : sentinelMessage;
             long t = msg.getT();
 
             if (t != lastT) {
-                int msgCount = msgBuffer.size();
                 int tDiff = (int) (lastT - tBase);
 
                 // update t index
-//                if (msgCount < Short.MAX_VALUE) {
-                    tIndex[tDiff] = (short) msgCount;
-//                } else {
-////                     TODO store overflowed count to additional map
-//                    throw new RuntimeException("A count is larger than short max");
-//                }
+                //  TODO store overflowed count to additional map
+                tIndex[tDiff] = (short) tLineBufferSize;
 
                 // store a and body
-                for (Message message : msgBuffer) {
+                for (int k = 0; k < tLineBufferSize; k++) {
+                    Message message = tLineBuffer[k];
                     if (tIndexCounter % DATA_SEGMENT_SIZE == 0) {
                         if (curDataFile != null) {
                             curDataFile.flushABuffer();
@@ -222,7 +208,7 @@ public class NewMessageStoreImpl extends MessageStore {
                     curDataFile.writeBody(message.getBody());
                     tIndexCounter++;
                 }
-                msgBuffer.clear();
+                tLineBufferSize = 0;
 
                 // update t index summary
                 if (t < T_UPPER_LIMIT) {
@@ -232,12 +218,10 @@ public class NewMessageStoreImpl extends MessageStore {
                     }
                 }
             }
-
             if (t >= currentMinT) {
                 break;
             }
-
-            msgBuffer.add(msg);
+            tLineBuffer[tLineBufferSize++] = msg;
             lastT = t;
             index--;
         }
@@ -297,7 +281,7 @@ public class NewMessageStoreImpl extends MessageStore {
                     logger.info("Flushed all memTables, msg count1: " + putCounter.get()
                             + ", msg count2: " + tIndexCounter
                             + ", persist buffer index: " + persistBufferIndex
-                            + ", max buffer index: " + maxBufferIndex
+//                            + ", max buffer index: " + maxBufferIndex
                             + ", time: " + (System.currentTimeMillis() - getStart)
                     );
                     firstGet = false;
@@ -447,7 +431,7 @@ public class NewMessageStoreImpl extends MessageStore {
         }
     }
 
-    private static DataFile newDataFile(int start, int end) {
+    private DataFile newDataFile(int start, int end) {
         DataFile dataFile = new DataFile();
         dataFile.index = dataFileCounter++;
         try {
@@ -470,7 +454,7 @@ public class NewMessageStoreImpl extends MessageStore {
         return dataFile;
     }
 
-    private static class DataFile {
+    private class DataFile {
         int index;
         int start;
         int end;
@@ -514,6 +498,11 @@ public class NewMessageStoreImpl extends MessageStore {
         }
     }
 
+    private static final int PERSIST_SAMPLE_RATE = 1000;
+    private static final int PUT_SAMPLE_RATE = 10000000;
+    private static final int GET_SAMPLE_RATE = 1000;
+    private static final int AVG_SAMPLE_RATE = 1000;
+
     private AtomicLong getMsgCounter = new AtomicLong(0);
     private AtomicLong avgMsgCounter = new AtomicLong(0);
 
@@ -522,6 +511,8 @@ public class NewMessageStoreImpl extends MessageStore {
     private long _getStart = 0;
     private long _getEnd = 0;
     private long _avgStart = 0;
+
+    private long maxBufferIndex = Long.MIN_VALUE;
 
 //    private void verifyData() {
 //        int totalCount = 0;

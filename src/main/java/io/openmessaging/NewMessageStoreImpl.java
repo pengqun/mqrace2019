@@ -108,20 +108,24 @@ public class NewMessageStoreImpl extends MessageStore {
 //            logger.info("Before add, time: " + (System.nanoTime() - putStart));
 //        }
 
-//        if (putId >= bufferOverflowLimit) {
-//            synchronized (bufferAvailableLock) {
-//                while (putId >= bufferOverflowLimit) {
-//                    try {
-//                        bufferAvailableLock.wait();
-//                    } catch (InterruptedException e) {
-//                        e.printStackTrace();
-//                    }
-//                }
-//            }
-//        }
+        if (putId >= bufferOverflowLimit) {
+            int waitTimes = 0;
+            synchronized (bufferAvailableLock) {
+                while (putId >= bufferOverflowLimit) {
+                    try {
+                        bufferAvailableLock.wait(1000);
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                    if (waitTimes++ > 5) {
+                        throw new RuntimeException("timeout");
+                    }
+                }
+            }
+        }
 
 //        int waitTimes = 0;
-        while (putId >= bufferOverflowLimit) {
+//        while (putId >= bufferOverflowLimit) {
 //            try {
 //                Thread.sleep(2);
 //            } catch (InterruptedException e) {
@@ -131,7 +135,7 @@ public class NewMessageStoreImpl extends MessageStore {
 //                throw new RuntimeException("timeout");
 //            }
 //            logger.info("Waited full buffer, time: " + (System.nanoTime() - putStart) / 1000 / 1000);
-        }
+//        }
 
         memBuffer.addMessage(message, putId % MAX_MEM_BUFFER_SIZE);
 
@@ -586,10 +590,10 @@ public class NewMessageStoreImpl extends MessageStore {
                         System.exit(-1);
                     }
                     size.set(0);
-//                    synchronized (bufferAvailableLock) {
-//                        bufferAvailableLock.notifyAll();
-//                    }
-                    bufferOverflowLimit += MAX_MEM_BUFFER_SIZE;
+                    synchronized (bufferAvailableLock) {
+                        bufferOverflowLimit += MAX_MEM_BUFFER_SIZE;
+                        bufferAvailableLock.notifyAll();
+                    }
                 });
             }
         }

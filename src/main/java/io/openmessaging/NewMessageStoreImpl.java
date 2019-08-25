@@ -39,9 +39,9 @@ public class NewMessageStoreImpl extends MessageStore {
     private static final int T_INDEX_SUMMARY_FACTOR = 32;
 
     private static final int WRITE_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 1024;
-    private static final int READ_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 2048;
+    private static final int READ_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 4096;
     private static final int WRITE_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 1024;
-    private static final int READ_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 512;
+    private static final int READ_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 256;
 
     private List<DataFile> dataFileList = new ArrayList<>();
     private DataFile curDataFile = null;

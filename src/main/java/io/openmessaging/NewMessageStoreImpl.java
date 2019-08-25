@@ -8,12 +8,12 @@ import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
-import java.util.*;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ThreadPoolExecutor;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Comparator;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.locks.LockSupport;
 
 import static io.openmessaging.Constants.*;
 
@@ -49,12 +49,6 @@ public class NewMessageStoreImpl extends MessageStore {
     private ByteBuffer aBufferForWrite = ByteBuffer.allocateDirect(WRITE_A_BUFFER_SIZE);
     private ByteBuffer bodyBufferForWrite = ByteBuffer.allocateDirect(WRITE_BODY_BUFFER_SIZE);
 
-    private Message[] memBuffer = new Message[MAX_MEM_BUFFER_SIZE];
-    private AtomicInteger memBufferSize = new AtomicInteger(0);
-    private long[] tCurrent = new long[PRODUCER_THREAD_NUM];
-    private int bufferOverflowLimit = MAX_MEM_BUFFER_SIZE;
-    private ThreadPoolExecutor persistThreadPool = (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
-
     private AtomicInteger threadIdCounter = new AtomicInteger(0);
     private ThreadLocal<Integer> threadId = ThreadLocal.withInitial(() -> threadIdCounter.getAndIncrement());
 
@@ -63,14 +57,13 @@ public class NewMessageStoreImpl extends MessageStore {
     private AtomicInteger avgCounter = new AtomicInteger(0);
     private int persistCounter = 0;
     private int dataFileCounter = 0;
-    private volatile boolean firstGet = true;
 
     private Message[] persistBuffer1 = new Message[PERSIST_BUFFER_SIZE];
     private Message[] persistBuffer2 = new Message[PERSIST_BUFFER_SIZE];
     private Message[] tLineBuffer = new Message[Short.MAX_VALUE];
     private int persistBufferIndex = 0;
     private int tLineBufferSize = 0;
-    private volatile boolean persistDone = false;
+    private volatile boolean rewriteDone = false;
 
     private short[] tIndex = new short[T_INDEX_SIZE];
     private int[] tIndexSummary = new int[T_INDEX_SIZE / T_INDEX_SUMMARY_FACTOR];
@@ -84,19 +77,17 @@ public class NewMessageStoreImpl extends MessageStore {
     private ThreadLocal<ByteBuffer> threadBufferForReadBody = ThreadLocal.withInitial(()
             -> ByteBuffer.allocateDirect(READ_BODY_BUFFER_SIZE));
 
-    private static RandomAccessFile[] stageFileList = new RandomAccessFile[PRODUCER_THREAD_NUM];
     private static FileChannel[] stageChannelList = new FileChannel[PRODUCER_THREAD_NUM];
-
-    private ThreadLocal<ByteBuffer> threadBufferForWriteStage = ThreadLocal.withInitial(()
-            -> ByteBuffer.allocateDirect(MSG_BYTE_LENGTH * 1024));
+    private static ByteBuffer[] stageWriteBuffer = new ByteBuffer[PRODUCER_THREAD_NUM];
+    private static ByteBuffer[] stageReadBuffer = new ByteBuffer[PRODUCER_THREAD_NUM];
 
     static {
-        for (int i = 0; i < PRODUCER_THREAD_NUM; i++) {
-            RandomAccessFile raf;
+        for (int i = 0; i < stageChannelList.length; i++) {
             try {
-                raf = new RandomAccessFile(Constants.DATA_DIR + "s" + i + ".data", "rw");
-                stageFileList[i] = raf;
+                RandomAccessFile raf = new RandomAccessFile(Constants.DATA_DIR + "s" + i + ".data", "rw");
                 stageChannelList[i] = raf.getChannel();
+                stageWriteBuffer[i] = ByteBuffer.allocateDirect(MSG_BYTE_LENGTH * 1024);
+                stageReadBuffer[i] = ByteBuffer.allocateDirect(MSG_BYTE_LENGTH * 1024);
             } catch (FileNotFoundException e) {
                 e.printStackTrace();
             }
@@ -106,16 +97,16 @@ public class NewMessageStoreImpl extends MessageStore {
 
     @Override
     public void put(Message message) {
-//        long putStart = System.nanoTime();
+        long putStart = System.nanoTime();
         int putId = putCounter.getAndIncrement();
         if (putId == 0) {
             _putStart = System.currentTimeMillis();
         }
-        if (putId == 10000 * 10000) {
-            throw new RuntimeException("" + (System.currentTimeMillis() - _putStart) + ", " + tIndexCounter);
-        }
+//        if (putId == 10000 * 10000) {
+//            throw new RuntimeException("" + (System.currentTimeMillis() - _putStart) + ", " + tIndexCounter);
+//        }
 
-        ByteBuffer byteBuffer = threadBufferForWriteStage.get();
+        ByteBuffer byteBuffer = stageWriteBuffer[threadId.get()];
         if (!byteBuffer.hasRemaining()) {
             byteBuffer.flip();
             try {
@@ -129,43 +120,14 @@ public class NewMessageStoreImpl extends MessageStore {
         byteBuffer.putLong(message.getA());
         byteBuffer.put(message.getBody());
 
-        if (true) {
-            return;
-        }
-
-        while (putId >= bufferOverflowLimit) {
-            LockSupport.parkNanos(1_000_000);
-        }
-
-        memBuffer[putId % MAX_MEM_BUFFER_SIZE] = message;
-        tCurrent[threadId.get()] = message.getT();
-
-        if (memBufferSize.incrementAndGet() == MAX_MEM_BUFFER_SIZE) {
-            persistThreadPool.execute(() -> {
-                long currentMinT = tCurrent[0];
-                for (int i = 1; i < tCurrent.length; i++) {
-                    currentMinT = Math.min(currentMinT, tCurrent[i]);
-                }
-                try {
-                    persistMemTable(MAX_MEM_BUFFER_SIZE, currentMinT);
-                } catch (Exception e) {
-                    logger.info("Failed to persist mem table: " + e.getMessage());
-                    System.exit(-1);
-                }
-                memBufferSize.set(0);
-                bufferOverflowLimit += MAX_MEM_BUFFER_SIZE;
-            });
-        }
-
         if (putId % PUT_SAMPLE_RATE == 0) {
-            logger.info("Put message to memTable with t: " + message.getT() + ", a: " + message.getA()
-//                    + ", time: " + (System.nanoTime() - putStart)
-                    + ", putId: " + putId
+            logger.info("Write message to stage file with t: " + message.getT() + ", a: " + message.getA()
+                    + ", time: " + (System.nanoTime() - putStart) + ", putId: " + putId
             );
         }
     }
 
-    private void persistMemTable(int size, long currentMinT) {
+    private void persistMemBuffer(Message[] memBuffer, int size, long currentMinT) {
         long persistStart = System.currentTimeMillis();
         int persistId = persistCounter++;
         if (persistId % PERSIST_SAMPLE_RATE == 0) {
@@ -265,6 +227,7 @@ public class NewMessageStoreImpl extends MessageStore {
         if (persistId % PERSIST_SAMPLE_RATE == 0) {
             logger.info("Done persisting memTable with size: " + size
                     + ", buffer index: " + persistBufferIndex
+                    + ", persist count: " + tIndexCounter
                     + ", time: " + (System.currentTimeMillis() - persistStart) + ", persistId: " + persistId);
         }
     }
@@ -275,6 +238,89 @@ public class NewMessageStoreImpl extends MessageStore {
             offset += tIndex[i];
         }
         return offset;
+    }
+
+    private void rewriteFiles() {
+        logger.info("Start rewrite files");
+        long rewriteStart = System.currentTimeMillis();
+        int putCounter = 0;
+        int fileCounter = 0;
+        long[] offsets = new long[PRODUCER_THREAD_NUM];
+        long[] tCurrent = new long[PRODUCER_THREAD_NUM];
+        int[] readDone = new int[PRODUCER_THREAD_NUM];
+        Message[] memBuffer = new Message[MAX_MEM_BUFFER_SIZE];
+
+        for (ByteBuffer buffer : stageReadBuffer) {
+            buffer.flip();
+        }
+
+        while (true) {
+            int fileIndex = fileCounter++ % PRODUCER_THREAD_NUM;
+            if (readDone[fileIndex] == 1) {
+                continue;
+            }
+            ByteBuffer byteBuffer = stageReadBuffer[fileIndex];
+            if (!byteBuffer.hasRemaining()) {
+                byteBuffer.clear();
+                int readBytes;
+                try {
+                    readBytes = stageChannelList[fileIndex].read(byteBuffer, offsets[fileIndex]);
+                } catch (IOException e) {
+                    throw new RuntimeException("read error");
+                }
+                if (readBytes <= 0) {
+                    readDone[fileIndex] = 1;
+                    logger.info("Done reading stage file: " + fileIndex);
+                    if (Arrays.stream(readDone).sum() == PRODUCER_THREAD_NUM) {
+                        logger.info("All stage files have been read");
+                        break;
+                    } else {
+                        continue;
+                    }
+                }
+                offsets[fileIndex] += readBytes;
+                byteBuffer.flip();
+            }
+
+            long t = byteBuffer.getLong();
+            long a = byteBuffer.getLong();
+            byte[] body = new byte[BODY_BYTE_LENGTH];
+            byteBuffer.get(body);
+            Message message = new Message(t, a, body);
+
+            int bufferIndex = putCounter++ % MAX_MEM_BUFFER_SIZE;
+            memBuffer[bufferIndex] = message;
+            tCurrent[fileIndex] = message.getT();
+
+            if (bufferIndex == MAX_MEM_BUFFER_SIZE - 1) {
+                long currentMinT = tCurrent[0];
+                for (int i = 1; i < tCurrent.length; i++) {
+                    currentMinT = Math.min(currentMinT, tCurrent[i]);
+                }
+                persistMemBuffer(memBuffer, MAX_MEM_BUFFER_SIZE, currentMinT);
+            }
+            if (putCounter % PUT_SAMPLE_RATE == 0) {
+                logger.info("Put message to mem buffer: " + putCounter);
+            }
+        }
+
+        int remainSize = putCounter % MAX_MEM_BUFFER_SIZE;
+        persistMemBuffer(memBuffer, remainSize, T_UPPER_LIMIT);
+        logger.info("Persisted last mem buffer with size: " + remainSize);
+
+        curDataFile.flushABuffer();
+        curDataFile.flushBodyBuffer();
+        logger.info("Flushed last data files");
+
+        persistBuffer1 = null;
+        persistBuffer2 = null;
+        System.gc();
+
+        logger.info("Done rewrite files"
+                + ", msg count1: " + putCounter
+                + ", msg count2: " + tIndexCounter
+                + ", persist buffer index: " + persistBufferIndex
+                + ", time: " + (System.currentTimeMillis() - rewriteStart));
     }
 
     @Override
@@ -289,45 +335,29 @@ public class NewMessageStoreImpl extends MessageStore {
             logger.info("getMessage - tMin: " + tMin + ", tMax: " + tMax
                     + ", aMin: " + aMin + ", aMax: " + aMax + ", getId: " + getId);
         }
-        if (firstGet) {
+        if (!rewriteDone) {
             synchronized (this) {
-                if (firstGet) {
-                    logger.info("Waiting for previous persist tasks");
-                    while (persistThreadPool.getActiveCount() + persistThreadPool.getQueue().size() > 0) {
-                        LockSupport.parkNanos(1_000_000);
+                if (!rewriteDone) {
+                    long totalSize = 0;
+                    for (int i = 0; i < stageWriteBuffer.length; i++) {
+                        ByteBuffer byteBuffer = stageWriteBuffer[i];
+                        byteBuffer.flip();
+                        if (byteBuffer.hasRemaining()) {
+                            try {
+                                stageChannelList[i].write(byteBuffer);
+                                totalSize += stageChannelList[i].size();
+                            } catch (IOException e) {
+                                throw new RuntimeException("write error");
+                            }
+                        }
+                        byteBuffer.clear();
                     }
-                    logger.info("Flushing remaining mem buffers");
-                    if (memBufferSize.get() > 0) {
-                        persistMemTable(memBufferSize.get(), T_UPPER_LIMIT);
-                    }
-                    logger.info("Flushed last mem buffer with size: " + memBufferSize.get());
+                    logger.info("Flushed all stage files, total size: " + totalSize);
 
-                    curDataFile.flushABuffer();
-                    curDataFile.flushBodyBuffer();
-//                    logger.info("Flushed data file with start " + curDataFile.start + " at end");
-//                    verifyData();
-                    persistDone = true;
-                    persistThreadPool.shutdown();
-                    persistBuffer1 = null;
-                    persistBuffer2 = null;
-                    memBuffer = null;
-                    System.gc();
-
-                    logger.info("Flushed all memTables, msg count1: " + putCounter.get()
-                            + ", msg count2: " + tIndexCounter
-                            + ", persist buffer index: " + persistBufferIndex
-//                            + ", max buffer index: " + maxBufferIndex
-                            + ", time: " + (System.currentTimeMillis() - getStart)
-                    );
-                    firstGet = false;
+                    rewriteFiles();
+                    rewriteDone = true;
                 }
-            }
-        }
-
-        while (!persistDone) {
-            LockSupport.parkNanos(1_000_000);
-            if (persistDone) {
-                logger.info("All persist tasks has finished, time: " + (System.currentTimeMillis() - getStart));
+                logger.info("Rewrite task has finished, time: " + (System.currentTimeMillis() - getStart));
             }
         }
 

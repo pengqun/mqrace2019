@@ -64,7 +64,7 @@ public class NewMessageStoreImpl extends MessageStore {
     private static AtomicInteger threadIdCounter = new AtomicInteger(0);
     private static ThreadLocal<Integer> threadId = ThreadLocal.withInitial(() -> threadIdCounter.getAndIncrement());
 
-    private static volatile int bufferOverflowLimit = MAX_MEM_BUFFER_SIZE;
+    private static int bufferOverflowLimit = MAX_MEM_BUFFER_SIZE;
 
     private static ThreadPoolExecutor persistThreadPool = (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
 
@@ -108,16 +108,9 @@ public class NewMessageStoreImpl extends MessageStore {
         if (IS_TEST_RUN && putId == 10000 * 10000) {
             throw new RuntimeException("" + (System.currentTimeMillis() - _putStart) + ", " + tIndexCounter);
         }
-//        if (putId % PUT_SAMPLE_RATE == 0) {
-//            logger.info("Before add, time: " + (System.nanoTime() - putStart));
-//        }
 
-//        int waitTimes = 0;
         while (putId >= bufferOverflowLimit) {
             LockSupport.parkNanos(1_000_000);
-//            if (waitTimes++ > 5000) {
-//                throw new RuntimeException("timeout");
-//            }
         }
 
         memBuffer[putId % MAX_MEM_BUFFER_SIZE] = message;

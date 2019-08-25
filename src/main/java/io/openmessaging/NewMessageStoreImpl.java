@@ -13,6 +13,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.LockSupport;
 
 import static io.openmessaging.Constants.*;
 
@@ -56,9 +57,13 @@ public class NewMessageStoreImpl extends MessageStore {
     private static ByteBuffer aBufferForWrite = ByteBuffer.allocateDirect(WRITE_A_BUFFER_SIZE);
     private static ByteBuffer bodyBufferForWrite = ByteBuffer.allocateDirect(WRITE_BODY_BUFFER_SIZE);
 
-    private static MemBuffer memBuffer = new MemBuffer();
+    private static Message[] memBuffer = new Message[MAX_MEM_BUFFER_SIZE];
+    private static AtomicInteger memBufferSize = new AtomicInteger(0);
+    private static long[] tCurrent = new long[PRODUCER_THREAD_NUM];
+
     private static AtomicInteger threadIdCounter = new AtomicInteger(0);
     private static ThreadLocal<Integer> threadId = ThreadLocal.withInitial(() -> threadIdCounter.getAndIncrement());
+
     private static int bufferOverflowLimit = MAX_MEM_BUFFER_SIZE;
     private static final Object bufferAvailableLock = new Object();
 
@@ -108,36 +113,64 @@ public class NewMessageStoreImpl extends MessageStore {
 //            logger.info("Before add, time: " + (System.nanoTime() - putStart));
 //        }
 
-        if (putId >= bufferOverflowLimit) {
-            int waitTimes = 0;
-            synchronized (bufferAvailableLock) {
-                while (putId >= bufferOverflowLimit) {
-                    try {
-                        bufferAvailableLock.wait(1000);
-                    } catch (InterruptedException e) {
-                        e.printStackTrace();
-                    }
-                    if (waitTimes++ > 5) {
-                        throw new RuntimeException("timeout");
-                    }
-                }
-            }
-        }
+//        if (putId >= bufferOverflowLimit) {
+//            int waitTimes = 0;
+//            synchronized (bufferAvailableLock) {
+//                while (putId >= bufferOverflowLimit) {
+//                    try {
+//                        bufferAvailableLock.wait(1000);
+//                    } catch (InterruptedException e) {
+//                        e.printStackTrace();
+//                    }
+//                    if (waitTimes++ > 5) {
+//                        throw new RuntimeException("timeout");
+//                    }
+//                }
+//            }
+//        }
 
 //        int waitTimes = 0;
-//        while (putId >= bufferOverflowLimit) {
+        while (putId >= bufferOverflowLimit) {
 //            try {
-//                Thread.sleep(2);
+//                Thread.sleep(0, 500000);
 //            } catch (InterruptedException e) {
 //                e.printStackTrace();
 //            }
+//            LockSupport.parkNanos(500_000);
+            LockSupport.parkNanos(1000_000);
 //            if (waitTimes++ > 5000) {
 //                throw new RuntimeException("timeout");
 //            }
 //            logger.info("Waited full buffer, time: " + (System.nanoTime() - putStart) / 1000 / 1000);
-//        }
+        }
 
-        memBuffer.addMessage(message, putId % MAX_MEM_BUFFER_SIZE);
+        memBuffer[putId % MAX_MEM_BUFFER_SIZE] = message;
+
+        tCurrent[threadId.get()] = message.getT();
+
+        if (memBufferSize.incrementAndGet() == MAX_MEM_BUFFER_SIZE) {
+//            if (memBufferSize.get() > MAX_MEM_BUFFER_SIZE) {
+//                logger.info("memBufferSize: " + memBufferSize.get() + ", tOverflowCounter: " + bufferOverflowLimit);
+//                throw new RuntimeException("mem buffer overflow");
+//            }
+            persistThreadPool.execute(() -> {
+                long currentMinT = tCurrent[0];
+                for (int i = 1; i < tCurrent.length; i++) {
+                    currentMinT = Math.min(currentMinT, tCurrent[i]);
+                }
+                try {
+                    persistMemTable(MAX_MEM_BUFFER_SIZE, currentMinT);
+                } catch (Exception e) {
+                    logger.info("Failed to persist mem table", e);
+                    System.exit(-1);
+                }
+                memBufferSize.set(0);
+//                synchronized (bufferAvailableLock) {
+                    bufferOverflowLimit += MAX_MEM_BUFFER_SIZE;
+//                    bufferAvailableLock.notifyAll();
+//                }
+            });
+        }
 
         if (putId % PUT_SAMPLE_RATE == 0) {
             logger.info("Put message to memTable with t: " + message.getT() + ", a: " + message.getA()
@@ -145,7 +178,7 @@ public class NewMessageStoreImpl extends MessageStore {
         }
     }
 
-    private static void persistMemTable(Message[] memInternalBuffer, int size, long currentMinT) {
+    private static void persistMemTable(int size, long currentMinT) {
         long persistStart = System.currentTimeMillis();
         int persistId = persistCounter++;
         if (persistId % PERSIST_SAMPLE_RATE == 0) {
@@ -153,7 +186,7 @@ public class NewMessageStoreImpl extends MessageStore {
                     + ", buffer index: " + persistBufferIndex + ", persistId: " + persistId);
         }
 
-        Arrays.sort(memInternalBuffer, 0, size, Comparator.comparingLong(m -> -m.getT()));
+        Arrays.sort(memBuffer, 0, size, Comparator.comparingLong(m -> -m.getT()));
         if (persistId % PERSIST_SAMPLE_RATE == 0) {
             logger.info("Sorted memTable with size: " + size + ", buffer index: " + persistBufferIndex
                     + ", time: " + (System.currentTimeMillis() - persistStart) + ", persistId: " + persistId);
@@ -165,7 +198,7 @@ public class NewMessageStoreImpl extends MessageStore {
         int i = 0;
         int j = 0;
         for (int m = 0; m < size; m++) {
-            Message message = memInternalBuffer[m];
+            Message message = memBuffer[m];
             while (i < persistBufferIndex && sourceBuffer[i].getT() >= message.getT()) {
                 targetBuffer[j++] = sourceBuffer[i++];
             }
@@ -278,18 +311,13 @@ public class NewMessageStoreImpl extends MessageStore {
         if (getId == 0) {
             logger.info("Waiting for previous persist tasks");
             while (persistThreadPool.getActiveCount() + persistThreadPool.getQueue().size() > 0) {
-                try {
-                    Thread.sleep(10);
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
+                LockSupport.parkNanos(10_000_000);
             }
             logger.info("Flushing remaining mem buffers");
-            int bufferSize = memBuffer.size.get();
-            if (bufferSize > 0) {
-                persistMemTable(memBuffer.buffer, bufferSize, T_UPPER_LIMIT);
+            if (memBufferSize.get() > 0) {
+                persistMemTable(memBufferSize.get(), T_UPPER_LIMIT);
             }
-            logger.info("Flushed last mem buffer with size: " + bufferSize);
+            logger.info("Flushed last mem buffer with size: " + memBufferSize.get());
 
             curDataFile.flushABuffer();
             curDataFile.flushBodyBuffer();
@@ -312,12 +340,7 @@ public class NewMessageStoreImpl extends MessageStore {
 //            }
         }
         while (!persistDone) {
-//            logger.info("Waiting for all persist tasks to finish");
-            try {
-                Thread.sleep(50);
-            } catch (InterruptedException e) {
-                e.printStackTrace();
-            }
+            LockSupport.parkNanos(10_000_000);
             if (persistDone) {
                 logger.info("All persist tasks has finished, time: " + (System.currentTimeMillis() - getStart));
             }
@@ -562,40 +585,6 @@ public class NewMessageStoreImpl extends MessageStore {
                 logger.info("[ERROR] Write to channel failed: " + e.getMessage());
             }
             bodyBufferForWrite.clear();
-        }
-    }
-
-    private static class MemBuffer {
-        Message[] buffer = new Message[MAX_MEM_BUFFER_SIZE];
-        AtomicInteger size = new AtomicInteger(0);
-        long[] tCurrent = new long[PRODUCER_THREAD_NUM];
-
-        void addMessage(Message message, int index) {
-            buffer[index] = message;
-            tCurrent[threadId.get()] = message.getT();
-            if (size.incrementAndGet() >= MAX_MEM_BUFFER_SIZE) {
-                if (size.get() > MAX_MEM_BUFFER_SIZE) {
-                    logger.info("size: " + size.get() + ", tOverflowCounter: " + bufferOverflowLimit);
-                    throw new RuntimeException("mem buffer overflow");
-                }
-                persistThreadPool.execute(() -> {
-                    long currentMinT = tCurrent[0];
-                    for (int i = 1; i < tCurrent.length; i++) {
-                        currentMinT = Math.min(currentMinT, tCurrent[i]);
-                    }
-                    try {
-                        persistMemTable(buffer, MAX_MEM_BUFFER_SIZE, currentMinT);
-                    } catch (Exception e) {
-                        logger.info("Failed to persist mem table", e);
-                        System.exit(-1);
-                    }
-                    size.set(0);
-                    synchronized (bufferAvailableLock) {
-                        bufferOverflowLimit += MAX_MEM_BUFFER_SIZE;
-                        bufferAvailableLock.notifyAll();
-                    }
-                });
-            }
         }
     }
 

@@ -145,6 +145,7 @@ public class NewMessageStoreImpl extends MessageStore {
         int currentT = 0;
         DataFile curDataFile = null;
         DataFile asDataFile = null;
+//        List<Long> aBuffer = new ArrayList<>(A_INDEX_BLOCK_SIZE);
 
         for (StageFile stageFile : stageFileList) {
             stageFile.prepareForRead();
@@ -153,7 +154,6 @@ public class NewMessageStoreImpl extends MessageStore {
         while (true) {
             int doneCount = 0;
             short writeCount = 0;
-            List<Long> aBuffer = new ArrayList<>(A_INDEX_BLOCK_SIZE);
 
             for (StageFile stageFile : stageFileList) {
                 if (stageFile.doneRead) {
@@ -174,7 +174,20 @@ public class NewMessageStoreImpl extends MessageStore {
                     curDataFile.writeA(message.getA());
                     curDataFile.writeBody(message.getBody());
 
-                    aBuffer.add(message.getA());
+//                    aBuffer.add(message.getA());
+//
+//                    if (aBuffer.size() == A_INDEX_BLOCK_SIZE) {
+//                        // sort and store into index
+//                        Collections.sort(aBuffer);
+//
+//                        for (long a : aBuffer) {
+//                            if (asCounter % DATA_SEGMENT_SIZE == 0) {
+//                                asDataFile = dataFileList.get(asCounter / DATA_SEGMENT_SIZE);
+//                            }
+//                            asDataFile.writeAS(a);
+//                            asCounter++;
+//                        }
+//                    }
 
                     if (putCounter % REWRITE_SAMPLE_RATE == 0) {
                         logger.info("Write message to data file: " + putCounter);
@@ -199,17 +212,6 @@ public class NewMessageStoreImpl extends MessageStore {
             // update t summary
             if (currentT % T_INDEX_SUMMARY_FACTOR == 0) {
                 tIndexSummary[currentT / T_INDEX_SUMMARY_FACTOR] = putCounter;
-            }
-
-            // sort and store into index
-            Collections.sort(aBuffer);
-
-            for (long a : aBuffer) {
-                if (asCounter % DATA_SEGMENT_SIZE == 0) {
-                    asDataFile = dataFileList.get(asCounter / DATA_SEGMENT_SIZE);
-                }
-                asDataFile.writeAS(a);
-                asCounter++;
             }
         }
 

@@ -24,9 +24,6 @@ public class NewMessageStoreImpl extends MessageStore {
 
     private static final Logger logger = Logger.getLogger(NewMessageStoreImpl.class);
 
-    // Assumptions
-    private static final long T_UPPER_LIMIT = Long.MAX_VALUE;
-    private static final long A_UPPER_LIMIT = Long.MAX_VALUE;
     private static final int MSG_COUNT_UPPER_LIMIT = Integer.MAX_VALUE;
 
     private static final int DATA_SEGMENT_SIZE = 4 * 1024 * 1024;
@@ -34,30 +31,37 @@ public class NewMessageStoreImpl extends MessageStore {
 
     // TODO split into multiple indexes
     private static final int T_INDEX_SIZE = 1200 * 1024 * 1024;
-    private static final int T_INDEX_SUMMARY_FACTOR = 32;
+    private static final int T_INDEX_SUMMARY_FACTOR = 16;
 
-    private static final int WRITE_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 1024;
-    private static final int READ_A_BUFFER_SIZE = Constants.KEY_A_BYTE_LENGTH * 1024 * 8;
-    private static final int WRITE_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 1024;
-    private static final int READ_BODY_BUFFER_SIZE = Constants.BODY_BYTE_LENGTH * 256;
+    private static final int WRITE_STAGE_BUFFER_SIZE = MSG_BYTE_LENGTH * 1024 * 4;
+    private static final int READ_STAGE_BUFFER_SIZE = MSG_BYTE_LENGTH * 1024;
 
-    private List<DataFile> dataFileList = new ArrayList<>();
-    private DataFile curDataFile = null;
+    private static final int WRITE_A_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024;
+    private static final int READ_A_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024 * 8;
 
-    private ByteBuffer aBufferForWrite = ByteBuffer.allocateDirect(WRITE_A_BUFFER_SIZE);
-    private ByteBuffer bodyBufferForWrite = ByteBuffer.allocateDirect(WRITE_BODY_BUFFER_SIZE);
+    private static final int WRITE_BODY_BUFFER_SIZE = BODY_BYTE_LENGTH * 1024;
+    private static final int READ_BODY_BUFFER_SIZE = BODY_BYTE_LENGTH * 256;
 
-    private AtomicInteger threadIdCounter = new AtomicInteger(0);
-    private ThreadLocal<Integer> threadId = ThreadLocal.withInitial(() -> threadIdCounter.getAndIncrement());
+    private static volatile long[] threadMinT = new long[PRODUCER_THREAD_NUM];
+    private static volatile long tBase = -1;
 
     private AtomicInteger putCounter = new AtomicInteger(0);
     private AtomicInteger getCounter = new AtomicInteger(0);
     private AtomicInteger avgCounter = new AtomicInteger(0);
 
+    private AtomicInteger threadIdCounter = new AtomicInteger(0);
+    private ThreadLocal<Integer> threadId = ThreadLocal.withInitial(() -> threadIdCounter.getAndIncrement());
+
+    private List<DataFile> dataFileList = new ArrayList<>();
+    private DataFile curDataFile = null;
     private int dataFileCounter = 0;
-    private volatile boolean rewriteDone = false;
+
+    private ByteBuffer aBufferForWrite = ByteBuffer.allocateDirect(WRITE_A_BUFFER_SIZE);
+    private ByteBuffer bodyBufferForWrite = ByteBuffer.allocateDirect(WRITE_BODY_BUFFER_SIZE);
+
     private short[] tIndex = new short[T_INDEX_SIZE];
     private int[] tIndexSummary = new int[T_INDEX_SIZE / T_INDEX_SUMMARY_FACTOR];
+    private volatile boolean rewriteDone = false;
 
     private ThreadLocal<ByteBuffer> threadBufferForReadA = ThreadLocal.withInitial(()
             -> ByteBuffer.allocateDirect(READ_A_BUFFER_SIZE));
@@ -71,18 +75,16 @@ public class NewMessageStoreImpl extends MessageStore {
         int id = threadId.get();
         RandomAccessFile raf;
         try {
-            raf = new RandomAccessFile(Constants.DATA_DIR + "s" + id + ".data", "rw");
+            raf = new RandomAccessFile(DATA_DIR + "s" + id + ".data", "rw");
         } catch (FileNotFoundException e) {
             throw new RuntimeException("no file");
         }
         stageFile.fileChannel = raf.getChannel();
-        stageFile.byteBuffer = ByteBuffer.allocateDirect(MSG_BYTE_LENGTH * 1024);
+        stageFile.byteBufferForWrite = ByteBuffer.allocateDirect(WRITE_STAGE_BUFFER_SIZE);
+        stageFile.byteBufferForRead = ByteBuffer.allocateDirect(READ_STAGE_BUFFER_SIZE);
         stageFileList[id] = stageFile;
         return stageFile;
     });
-
-    private static volatile long tBase = -1;
-    private static volatile long[] threadMinT = new long[PRODUCER_THREAD_NUM];
 
     static {
         Arrays.fill(threadMinT, -1);
@@ -174,8 +176,8 @@ public class NewMessageStoreImpl extends MessageStore {
                 break;
             }
 
-            // update t index
             //  TODO store overflowed count to additional map
+            // update t index
             tIndex[currentT++] = writeCount;
 
             // update t summary
@@ -341,28 +343,29 @@ public class NewMessageStoreImpl extends MessageStore {
 
     private static class StageFile {
         FileChannel fileChannel;
-        ByteBuffer byteBuffer;
+        ByteBuffer byteBufferForWrite;
+        ByteBuffer byteBufferForRead;
         long fileOffset;
         Message peeked;
         boolean doneRead;
 
         void writeMessage(Message message) {
-            if (!byteBuffer.hasRemaining()) {
+            if (!byteBufferForWrite.hasRemaining()) {
                 flushBuffer();
             }
-            byteBuffer.putInt((int) (message.getT() - tBase));
-            byteBuffer.putLong(message.getA());
-            byteBuffer.put(message.getBody());
+            byteBufferForWrite.putInt((int) (message.getT() - tBase));
+            byteBufferForWrite.putLong(message.getA());
+            byteBufferForWrite.put(message.getBody());
         }
 
         void flushBuffer() {
-            byteBuffer.flip();
+            byteBufferForWrite.flip();
             try {
-                fileChannel.write(byteBuffer);
+                fileChannel.write(byteBufferForWrite);
             } catch (IOException e) {
                 throw new RuntimeException("write error");
             }
-            byteBuffer.clear();
+            byteBufferForWrite.clear();
         }
 
         long fileSize() {
@@ -374,22 +377,22 @@ public class NewMessageStoreImpl extends MessageStore {
         }
 
         void prepareForRead() {
-            byteBuffer.flip();
+            byteBufferForRead.flip();
         }
 
         Message peekMessage() {
             if (peeked != null) {
                 return peeked;
             }
-            if (!byteBuffer.hasRemaining()) {
+            if (!byteBufferForRead.hasRemaining()) {
                 if (!fillReadBuffer()) {
                     return null;
                 }
             }
-            int t = byteBuffer.getInt();
-            long a = byteBuffer.getLong();
+            int t = byteBufferForRead.getInt();
+            long a = byteBufferForRead.getLong();
             byte[] body = new byte[BODY_BYTE_LENGTH];
-            byteBuffer.get(body);
+            byteBufferForRead.get(body);
 
             peeked = new Message(a, t, body);
             return peeked;
@@ -402,10 +405,10 @@ public class NewMessageStoreImpl extends MessageStore {
         }
 
         boolean fillReadBuffer() {
-            byteBuffer.clear();
+            byteBufferForRead.clear();
             int readBytes;
             try {
-                readBytes = fileChannel.read(byteBuffer, fileOffset);
+                readBytes = fileChannel.read(byteBufferForRead, fileOffset);
             } catch (IOException e) {
                 throw new RuntimeException("read error");
             }
@@ -414,7 +417,7 @@ public class NewMessageStoreImpl extends MessageStore {
                 return false;
             }
             fileOffset += readBytes;
-            byteBuffer.flip();
+            byteBufferForRead.flip();
             return true;
         }
     }
@@ -446,9 +449,9 @@ public class NewMessageStoreImpl extends MessageStore {
         dataFile.index = dataFileCounter++;
         try {
             dataFile.aFile = new RandomAccessFile(
-                    Constants.DATA_DIR + "a" + dataFile.index + ".data", "rw");
+                    DATA_DIR + "a" + dataFile.index + ".data", "rw");
             dataFile.bodyFile = new RandomAccessFile(
-                    Constants.DATA_DIR + "b" + dataFile.index + ".data", "rw");
+                    DATA_DIR + "b" + dataFile.index + ".data", "rw");
         } catch (FileNotFoundException e) {
             e.printStackTrace();
         }
@@ -509,7 +512,7 @@ public class NewMessageStoreImpl extends MessageStore {
     }
 
     private static final int PUT_SAMPLE_RATE = 10000000;
-    private static final int REWRITE_SAMPLE_RATE = 1000000;
+    private static final int REWRITE_SAMPLE_RATE = 10000000;
     private static final int GET_SAMPLE_RATE = 1000;
     private static final int AVG_SAMPLE_RATE = 1000;
 

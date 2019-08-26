@@ -181,9 +181,9 @@ public class NewMessageStoreImpl extends MessageStore {
                     if (putCounter % REWRITE_SAMPLE_RATE == 0) {
                         logger.info("Write message to data file: " + putCounter);
                     }
-                    if (putCounter == 200_000_000) {
-                        throw new RuntimeException("" + (System.currentTimeMillis() - rewriteStart) + ", " + putCounter);
-                    }
+//                    if (putCounter == 200_000_000) {
+//                        throw new RuntimeException("" + (System.currentTimeMillis() - rewriteStart) + ", " + putCounter);
+//                    }
                     putCounter++;
                     writeCount++;
                 }

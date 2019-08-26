@@ -30,8 +30,8 @@ public class LsmMessageStoreImpl extends MessageStore {
 
     private static final int SST_FILE_INDEX_RATE = 32;
 
-    private static final int WRITE_BUFFER_SIZE = Constants.MSG_BYTE_LENGTH * 1024;
-    private static final int READ_BUFFER_SIZE = Constants.MSG_BYTE_LENGTH * 1024;
+    private static final int WRITE_BUFFER_SIZE = Constants.MSG_FULL_BYTE_LENGTH * 1024;
+    private static final int READ_BUFFER_SIZE = Constants.MSG_FULL_BYTE_LENGTH * 1024;
     private static final int WRITE_TA_BUFFER_SIZE = Constants.TA_BYTE_LENGTH * 1024;
     private static final int READ_TA_BUFFER_SIZE = Constants.TA_BYTE_LENGTH * 1024;
 
@@ -184,7 +184,7 @@ public class LsmMessageStoreImpl extends MessageStore {
 
         for (int i = start; i < end; i++) {
             Message msg = ringBuffer[i];
-            if (buffer.remaining() < Constants.MSG_BYTE_LENGTH) {
+            if (buffer.remaining() < Constants.MSG_FULL_BYTE_LENGTH) {
                 buffer.flip();
                 try {
                     writeBytes += buffer.limit();
@@ -313,7 +313,7 @@ public class LsmMessageStoreImpl extends MessageStore {
                             + ", time: " + (System.currentTimeMillis() - getStart) + ", getId: " + getId);
                 }
 
-                int offset = index * Constants.MSG_BYTE_LENGTH;
+                int offset = index * Constants.MSG_FULL_BYTE_LENGTH;
                 boolean allFound = false;
 
                 while (!allFound && offset < file.size) {
@@ -516,7 +516,7 @@ public class LsmMessageStoreImpl extends MessageStore {
             this.tEnd = tEnd;
             try {
                 this.size = (int) channel.size();
-                this.msgs = size / Constants.MSG_BYTE_LENGTH;
+                this.msgs = size / Constants.MSG_FULL_BYTE_LENGTH;
             } catch (IOException e) {
                 e.printStackTrace();
             }
@@ -533,7 +533,7 @@ public class LsmMessageStoreImpl extends MessageStore {
         for (SSTableFile file : ssTableFileList.subList(0, Math.min(10, ssTableFileList.size()))) {
             try {
                 logger.info(file.id + "\t[" + file.tStart + ", " + file.tEnd + "] - "
-                        + file.channel.size() + " / " + Constants.MSG_BYTE_LENGTH + " = " + file.msgs);
+                        + file.channel.size() + " / " + Constants.MSG_FULL_BYTE_LENGTH + " = " + file.msgs);
             } catch (IOException e) {
                 e.printStackTrace();
             }

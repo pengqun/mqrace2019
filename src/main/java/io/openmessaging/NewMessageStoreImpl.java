@@ -8,9 +8,7 @@ import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
+import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.LockSupport;
@@ -31,13 +29,19 @@ public class NewMessageStoreImpl extends MessageStore {
 
     // TODO split into multiple indexes
     private static final int T_INDEX_SIZE = 1200 * 1024 * 1024;
-    private static final int T_INDEX_SUMMARY_FACTOR = 16;
+    private static final int T_INDEX_SUMMARY_FACTOR = 32;
+
+    private static final int A_INDEX_BLOCK_SIZE = 1024;
+    private static final int A_INDEX_MEMORY_FACTOR = 32;
 
     private static final int WRITE_STAGE_BUFFER_SIZE = MSG_BYTE_LENGTH * 1024 * 4;
     private static final int READ_STAGE_BUFFER_SIZE = MSG_BYTE_LENGTH * 1024;
 
     private static final int WRITE_A_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024;
     private static final int READ_A_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024 * 8;
+
+    private static final int WRITE_AS_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024;
+    private static final int READ_AS_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024 * 8;
 
     private static final int WRITE_BODY_BUFFER_SIZE = BODY_BYTE_LENGTH * 1024;
     private static final int READ_BODY_BUFFER_SIZE = BODY_BYTE_LENGTH * 256;
@@ -53,10 +57,10 @@ public class NewMessageStoreImpl extends MessageStore {
     private ThreadLocal<Integer> threadId = ThreadLocal.withInitial(() -> threadIdCounter.getAndIncrement());
 
     private List<DataFile> dataFileList = new ArrayList<>();
-    private DataFile curDataFile = null;
     private int dataFileCounter = 0;
 
     private ByteBuffer aBufferForWrite = ByteBuffer.allocateDirect(WRITE_A_BUFFER_SIZE);
+    private ByteBuffer asBufferForWrite = ByteBuffer.allocateDirect(WRITE_AS_BUFFER_SIZE);
     private ByteBuffer bodyBufferForWrite = ByteBuffer.allocateDirect(WRITE_BODY_BUFFER_SIZE);
 
     private short[] tIndex = new short[T_INDEX_SIZE];
@@ -75,7 +79,7 @@ public class NewMessageStoreImpl extends MessageStore {
         int id = threadId.get();
         RandomAccessFile raf;
         try {
-            raf = new RandomAccessFile(DATA_DIR + "s" + id + ".data", "rw");
+            raf = new RandomAccessFile(DATA_DIR + "stage" + id + ".data", "rw");
         } catch (FileNotFoundException e) {
             throw new RuntimeException("no file");
         }
@@ -135,8 +139,12 @@ public class NewMessageStoreImpl extends MessageStore {
 
     private void rewriteFiles() {
         logger.info("Start rewrite files");
+        long rewriteStart = System.currentTimeMillis();
         int putCounter = 0;
+        int asCounter = 0;
         int currentT = 0;
+        DataFile curDataFile = null;
+        DataFile asDataFile = null;
 
         for (StageFile stageFile : stageFileList) {
             stageFile.prepareForRead();
@@ -145,6 +153,7 @@ public class NewMessageStoreImpl extends MessageStore {
         while (true) {
             int doneCount = 0;
             short writeCount = 0;
+            List<Long> aBuffer = new ArrayList<>(A_INDEX_BLOCK_SIZE);
 
             for (StageFile stageFile : stageFileList) {
                 if (stageFile.doneRead) {
@@ -165,14 +174,21 @@ public class NewMessageStoreImpl extends MessageStore {
                     curDataFile.writeA(message.getA());
                     curDataFile.writeBody(message.getBody());
 
+                    aBuffer.add(message.getA());
+
                     if (putCounter % REWRITE_SAMPLE_RATE == 0) {
                         logger.info("Write message to data file: " + putCounter);
+                    }
+                    if (putCounter == 10000 * 10000) {
+                        throw new RuntimeException("" + (System.currentTimeMillis() - rewriteStart)
+                                + ", " + asCounter + ", " + putCounter);
                     }
                     putCounter++;
                     writeCount++;
                 }
             }
             if (doneCount == PRODUCER_THREAD_NUM) {
+                logger.info("All stage files has been processed");
                 break;
             }
 
@@ -184,11 +200,27 @@ public class NewMessageStoreImpl extends MessageStore {
             if (currentT % T_INDEX_SUMMARY_FACTOR == 0) {
                 tIndexSummary[currentT / T_INDEX_SUMMARY_FACTOR] = putCounter;
             }
+
+            // sort and store into index
+            Collections.sort(aBuffer);
+
+            for (long a : aBuffer) {
+                if (asCounter % DATA_SEGMENT_SIZE == 0) {
+                    asDataFile = dataFileList.get(asCounter / DATA_SEGMENT_SIZE);
+                }
+                asDataFile.writeAS(a);
+                asCounter++;
+            }
         }
 
-        curDataFile.flushABuffer();
-        curDataFile.flushBodyBuffer();
-        logger.info("Done rewrite files, msg count: " + putCounter);
+        if (curDataFile != null) {
+            curDataFile.flushABuffer();
+            curDataFile.flushBodyBuffer();
+        }
+        if (asDataFile != null) {
+            asDataFile.flushASBuffer();
+        }
+        logger.info("Done rewrite files, msg count1: " + putCounter + ", count2: " + asCounter);
     }
 
     private long getOffsetByTDiff(int tDiff) {
@@ -450,12 +482,15 @@ public class NewMessageStoreImpl extends MessageStore {
         try {
             dataFile.aFile = new RandomAccessFile(
                     DATA_DIR + "a" + dataFile.index + ".data", "rw");
+            dataFile.asFile = new RandomAccessFile(
+                    DATA_DIR + "as" + dataFile.index + ".data", "rw");
             dataFile.bodyFile = new RandomAccessFile(
-                    DATA_DIR + "b" + dataFile.index + ".data", "rw");
+                    DATA_DIR + "body" + dataFile.index + ".data", "rw");
         } catch (FileNotFoundException e) {
             e.printStackTrace();
         }
         dataFile.aChannel = dataFile.aFile.getChannel();
+        dataFile.asChannel = dataFile.asFile.getChannel();
         dataFile.bodyChannel = dataFile.bodyFile.getChannel();
         dataFile.start = start;
         dataFile.end = end;
@@ -472,42 +507,58 @@ public class NewMessageStoreImpl extends MessageStore {
         int start;
         int end;
         RandomAccessFile aFile;
+        RandomAccessFile asFile;
         RandomAccessFile bodyFile;
         FileChannel aChannel;
+        FileChannel asChannel;
         FileChannel bodyChannel;
 
         void writeA(long a) {
-            if (!aBufferForWrite.hasRemaining()) {
-                flushABuffer();
-            }
-            aBufferForWrite.putLong(a);
+            writeLong(a, aBufferForWrite, aChannel);
+        }
+
+        void writeAS(long as) {
+            writeLong(as, asBufferForWrite, asChannel);
         }
 
         void writeBody(byte[] body) {
-            if (!bodyBufferForWrite.hasRemaining()) {
-                flushBodyBuffer();
-            }
-            bodyBufferForWrite.put(body);
+            writeBytes(body, bodyBufferForWrite, bodyChannel);
         }
 
         void flushABuffer() {
-            aBufferForWrite.flip();
-            try {
-                aChannel.write(aBufferForWrite);
-            } catch (IOException e) {
-                throw new RuntimeException("write error");
-            }
-            aBufferForWrite.clear();
+            flushBuffer(aBufferForWrite, aChannel);
+        }
+
+        void flushASBuffer() {
+            flushBuffer(asBufferForWrite, asChannel);
         }
 
         void flushBodyBuffer() {
-            bodyBufferForWrite.flip();
+            flushBuffer(bodyBufferForWrite, bodyChannel);
+        }
+
+        void writeLong(long value, ByteBuffer byteBuffer, FileChannel fileChannel) {
+            if (!byteBuffer.hasRemaining()) {
+                flushBuffer(byteBuffer, fileChannel);
+            }
+            byteBuffer.putLong(value);
+        }
+
+        void writeBytes(byte[] bytes, ByteBuffer byteBuffer, FileChannel fileChannel) {
+            if (!byteBuffer.hasRemaining()) {
+                flushBuffer(byteBuffer, fileChannel);
+            }
+            byteBuffer.put(bytes);
+        }
+
+        void flushBuffer(ByteBuffer byteBuffer, FileChannel fileChannel) {
+            byteBuffer.flip();
             try {
-                bodyChannel.write(bodyBufferForWrite);
+                fileChannel.write(byteBuffer);
             } catch (IOException e) {
                 throw new RuntimeException("write error");
             }
-            bodyBufferForWrite.clear();
+            byteBuffer.clear();
         }
     }
 

@@ -144,7 +144,6 @@ public class NewMessageStoreImpl extends MessageStore {
         logger.info("Start rewrite files");
         long rewriteStart = System.currentTimeMillis();
         int putCounter = 0;
-        int asCounter = 0;
         int currentT = 0;
         DataFile curDataFile = null;
         List<Long> aBuffer = new ArrayList<>(A_INDEX_BLOCK_SIZE);
@@ -179,26 +178,11 @@ public class NewMessageStoreImpl extends MessageStore {
 
                     aBuffer.add(message.getA());
 
-                    if (aBuffer.size() == A_INDEX_BLOCK_SIZE) {
-                        // sort and store into index
-                        Collections.sort(aBuffer);
-
-//                        for (long a : aBuffer) {
-//                            if (asCounter % DATA_SEGMENT_SIZE == 0) {
-//                                asDataFile = dataFileList.get(asCounter / DATA_SEGMENT_SIZE);
-//                            }
-//                            asDataFile.writeAS(a);
-//                            asCounter++;
-//                        }
-                        aBuffer.clear();
-                    }
-
                     if (putCounter % REWRITE_SAMPLE_RATE == 0) {
                         logger.info("Write message to data file: " + putCounter);
                     }
-                    if (putCounter == 100_000_000) {
-                        throw new RuntimeException("" + (System.currentTimeMillis() - rewriteStart)
-                                + ", " + asCounter + ", " + putCounter);
+                    if (putCounter == 200_000_000) {
+                        throw new RuntimeException("" + (System.currentTimeMillis() - rewriteStart) + ", " + putCounter);
                     }
                     putCounter++;
                     writeCount++;
@@ -217,13 +201,32 @@ public class NewMessageStoreImpl extends MessageStore {
             if (currentT % T_INDEX_SUMMARY_FACTOR == 0) {
                 tIndexSummary[currentT / T_INDEX_SUMMARY_FACTOR] = putCounter;
             }
+
+            // store a index
+            if (currentT % A_INDEX_BLOCK_SIZE == 0) {
+                // sort and store into index
+                long start = System.nanoTime();
+                Collections.sort(aBuffer);
+                if (currentT % (A_INDEX_BLOCK_SIZE * 10) == 0) {
+                    logger.info("Sorted " + aBuffer.size() + " a, time: " + (System.nanoTime() - start));
+                }
+
+//                        for (long a : aBuffer) {
+//                            if (asCounter % DATA_SEGMENT_SIZE == 0) {
+//                                asDataFile = dataFileList.get(asCounter / DATA_SEGMENT_SIZE);
+//                            }
+//                            asDataFile.writeAS(a);
+//                            asCounter++;
+//                        }
+                aBuffer.clear();
+            }
         }
 
         if (curDataFile != null) {
             curDataFile.flushABuffer();
             curDataFile.flushBodyBuffer();
         }
-        logger.info("Done rewrite files, msg count1: " + putCounter + ", count2: " + asCounter);
+        logger.info("Done rewrite files, msg count1: " + putCounter);
     }
 
     private long getOffsetByTDiff(int tDiff) {

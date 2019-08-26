@@ -215,6 +215,7 @@ public class NewMessageStoreImpl extends MessageStore {
                     long totalSize = 0;
                     for (StageFile stageFile : stageFileList) {
                         stageFile.flushBuffer();
+                        totalSize += stageFile.fileSize();
                     }
                     logger.info("Flushed all stage files, total size: " + totalSize);
 
@@ -364,6 +365,14 @@ public class NewMessageStoreImpl extends MessageStore {
             byteBuffer.clear();
         }
 
+        long fileSize() {
+            try {
+                return fileChannel.size();
+            } catch (IOException e) {
+                throw new RuntimeException("size error");
+            }
+        }
+
         void prepareForRead() {
             byteBuffer.flip();
         }
@@ -382,7 +391,7 @@ public class NewMessageStoreImpl extends MessageStore {
             byte[] body = new byte[BODY_BYTE_LENGTH];
             byteBuffer.get(body);
 
-            peeked = new Message(a, t + tBase, body);
+            peeked = new Message(a, t, body);
             return peeked;
         }
 

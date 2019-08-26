@@ -207,7 +207,7 @@ public class NewMessageStoreImpl extends MessageStore {
                 // sort and store into index
                 long start = System.nanoTime();
                 Collections.sort(aBuffer);
-                if (currentT % (A_INDEX_BLOCK_SIZE * 10) == 0) {
+                if (currentT % (A_INDEX_BLOCK_SIZE * 1024) == 0) {
                     logger.info("Sorted " + aBuffer.size() + " a, time: " + (System.nanoTime() - start));
                 }
 

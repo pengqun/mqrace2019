@@ -34,8 +34,8 @@ public class NewMessageStoreImpl extends MessageStore {
     private static final int T_INDEX_SIZE = 1200 * 1024 * 1024;
     private static final int T_INDEX_SUMMARY_FACTOR = 32;
 
-    private static final int A_INDEX_BLOCK_SIZE = 1024;
-    private static final int A_INDEX_MEMORY_FACTOR = 32;
+    private static final int A_INDEX_BLOCK_SIZE = 1024 * 4;
+    private static final int A_INDEX_META_FACTOR = 32;
 
     private static final int WRITE_STAGE_BUFFER_SIZE = MSG_BYTE_LENGTH * 1024;
     private static final int READ_STAGE_BUFFER_SIZE = MSG_BYTE_LENGTH * 1024;
@@ -43,8 +43,8 @@ public class NewMessageStoreImpl extends MessageStore {
     private static final int WRITE_A_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024;
     private static final int READ_A_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024 * 8;
 
-    private static final int WRITE_AS_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024;
-    private static final int READ_AS_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024 * 8;
+    private static final int WRITE_AI_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024;
+    private static final int READ_AI_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024 * 8;
 
     private static final int WRITE_BODY_BUFFER_SIZE = BODY_BYTE_LENGTH * 1024;
     private static final int READ_BODY_BUFFER_SIZE = BODY_BYTE_LENGTH * 1024;
@@ -63,7 +63,7 @@ public class NewMessageStoreImpl extends MessageStore {
     private int dataFileCounter = 0;
 
     private ByteBuffer aBufferForWrite = ByteBuffer.allocateDirect(WRITE_A_BUFFER_SIZE);
-    private ByteBuffer asBufferForWrite = ByteBuffer.allocateDirect(WRITE_AS_BUFFER_SIZE);
+    private ByteBuffer aiBufferForWrite = ByteBuffer.allocateDirect(WRITE_AI_BUFFER_SIZE);
     private ByteBuffer bodyBufferForWrite = ByteBuffer.allocateDirect(WRITE_BODY_BUFFER_SIZE);
 
     private short[] tIndex = new short[T_INDEX_SIZE];
@@ -146,6 +146,7 @@ public class NewMessageStoreImpl extends MessageStore {
         int putCounter = 0;
         int currentT = 0;
         DataFile curDataFile = null;
+        IndexFile indexFile = new IndexFile();
         List<Long> aBuffer = new ArrayList<>(A_INDEX_BLOCK_SIZE);
 
         for (StageFile stageFile : stageFileList) {
@@ -202,22 +203,23 @@ public class NewMessageStoreImpl extends MessageStore {
                 tIndexSummary[currentT / T_INDEX_SUMMARY_FACTOR] = putCounter;
             }
 
-            // store a index
+            // sort and store into a index block
             if (currentT % A_INDEX_BLOCK_SIZE == 0) {
-                // sort and store into index
                 long start = System.nanoTime();
+                int size = aBuffer.size();
                 Collections.sort(aBuffer);
                 if (currentT % (A_INDEX_BLOCK_SIZE * 1024) == 0) {
-                    logger.info("Sorted " + aBuffer.size() + " a, time: " + (System.nanoTime() - start));
+                    logger.info("Sorted " + size + " a, time: " + (System.nanoTime() - start));
                 }
-
-//                        for (long a : aBuffer) {
-//                            if (asCounter % DATA_SEGMENT_SIZE == 0) {
-//                                asDataFile = dataFileList.get(asCounter / DATA_SEGMENT_SIZE);
-//                            }
-//                            asDataFile.writeAS(a);
-//                            asCounter++;
-//                        }
+                long[] metaIndex = new long[size / A_INDEX_META_FACTOR + 1];
+                for (int i = 0; i < size; i++) {
+                    long a = aBuffer.get(i);
+                    indexFile.writeA(a);
+                    if (i % A_INDEX_META_FACTOR == 0) {
+                        metaIndex[i / A_INDEX_META_FACTOR] = a;
+                    }
+                }
+                indexFile.metaIndexList.add(metaIndex);
                 aBuffer.clear();
             }
         }
@@ -226,7 +228,8 @@ public class NewMessageStoreImpl extends MessageStore {
             curDataFile.flushABuffer();
             curDataFile.flushBodyBuffer();
         }
-        logger.info("Done rewrite files, msg count1: " + putCounter);
+        indexFile.flushABuffer();
+        logger.info("Done rewrite files, msg count1: " + putCounter + ", discard ai: " + aBuffer.size());
     }
 
     private long getOffsetByTDiff(int tDiff) {
@@ -517,7 +520,7 @@ public class NewMessageStoreImpl extends MessageStore {
         FileChannel asChannel;
         FileChannel bodyChannel;
 
-        public DataFile(int start, int end) {
+        DataFile(int start, int end) {
             this.start = start;
             this.end = end;
             if (this.end < 0) {
@@ -556,6 +559,32 @@ public class NewMessageStoreImpl extends MessageStore {
             flushBuffer(bodyBufferForWrite, bodyChannel);
         }
     }
+
+    private class IndexFile {
+        RandomAccessFile aiFile;
+        FileChannel aiChannel;
+        List<long[]> metaIndexList;
+
+        IndexFile() {
+            try {
+                this.aiFile = new RandomAccessFile(
+                        DATA_DIR + "ai.data", "rw");
+            } catch (FileNotFoundException e) {
+                throw new RuntimeException("file error");
+            }
+            this.aiChannel = this.aiFile.getChannel();
+            metaIndexList = new ArrayList<>(1024 * 1024);
+        }
+
+        void writeA(long a) {
+            writeLong(a, aiBufferForWrite, aiChannel);
+        }
+
+        void flushABuffer() {
+            flushBuffer(aiBufferForWrite, aiChannel);
+        }
+    }
+
 
     private static final int PUT_SAMPLE_RATE = 10000000;
     private static final int REWRITE_SAMPLE_RATE = 10000000;

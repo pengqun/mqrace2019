@@ -44,10 +44,10 @@ public class NewMessageStoreImpl extends MessageStore {
     private static final int READ_STAGE_BUFFER_SIZE = MSG_BYTE_LENGTH * 1024;
 
     private static final int WRITE_A_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024;
-    private static final int READ_A_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024 * 8;
+    private static final int READ_A_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 512;
 
     private static final int WRITE_AI_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024;
-    private static final int READ_AI_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024 * 8;
+    private static final int READ_AI_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 512;
 
     private static final int WRITE_BODY_BUFFER_SIZE = BODY_BYTE_LENGTH * 1024;
     private static final int READ_BODY_BUFFER_SIZE = BODY_BYTE_LENGTH * 1024;
@@ -338,7 +338,8 @@ public class NewMessageStoreImpl extends MessageStore {
         }
         if (avgId % AVG_SAMPLE_RATE == 0) {
             logger.info("getAvgValue - tMin: " + tMin + ", tMax: " + tMax
-                    + ", aMin: " + aMin + ", aMax: " + aMax + ", avgId: " + avgId);
+                    + ", aMin: " + aMin + ", aMax: " + aMax
+                    + ", tRange: " + (tMax - tMin) + ", avgId: " + avgId);
             if (IS_TEST_RUN && avgId == TEST_BOUNDARY) {
                 long putDuration = _putEnd - _putStart;
                 long getDuration = _getEnd - _getStart;
@@ -372,39 +373,41 @@ public class NewMessageStoreImpl extends MessageStore {
         }
         int tEnd = (tMaxDiff + 1) / A_INDEX_BLOCK_SIZE * A_INDEX_BLOCK_SIZE; // exclusive
         if (avgId % AVG_SAMPLE_RATE == 0) {
-            logger.info("tStart: " + tStart + ", tEnd: " + tEnd);
+            int blocks = (tEnd - tStart) / A_INDEX_BLOCK_SIZE;
+            logger.info("tStart: " + tStart + ", tEnd: " + tEnd
+                    + ", blocks: " + blocks + ", covered: " + blocks * A_INDEX_BLOCK_SIZE
+                    + ", uncovered: " + (tMaxDiff - tMinDiff - tEnd + tStart) + ", avgId: " + avgId);
         }
 
         if (tStart >= tEnd) {
             // Back to normal
-            SumAndCount result = getAvgValueNormal(aMin, aMax, tMinDiff, tMaxDiff);
+            SumAndCount result = getAvgValueNormal(avgId, aMin, aMax, tMinDiff, tMaxDiff);
             sum += result.sum;
             count += result.count;
 
         } else {
             // Process head
             if (tMinDiff != tStart) {
-                SumAndCount result = getAvgValueNormal(aMin, aMax, tMinDiff, tStart - 1);
+                SumAndCount result = getAvgValueNormal(avgId, aMin, aMax, tMinDiff, tStart - 1);
                 sum += result.sum;
                 count += result.count;
             }
             // Process tail
             if (tMaxDiff > tEnd - 1) {
-                SumAndCount result = getAvgValueNormal(aMin, aMax, tEnd, tMaxDiff);
+                SumAndCount result = getAvgValueNormal(avgId, aMin, aMax, tEnd, tMaxDiff);
                 sum += result.sum;
                 count += result.count;
             }
             // Process middle
             for (int tIndex = tStart; tIndex < tEnd; tIndex += A_INDEX_BLOCK_SIZE) {
-                SumAndCount result = getAvgValueFast(aMin, aMax, tIndex, tIndex + A_INDEX_BLOCK_SIZE - 1);
+                SumAndCount result = getAvgValueFast(avgId, aMin, aMax, tIndex, tIndex + A_INDEX_BLOCK_SIZE - 1);
                 sum += result.sum;
                 count += result.count;
             }
         }
 
         if (avgId % AVG_SAMPLE_RATE == 0) {
-            logger.info("Got " + count
-                    + ", time: " + (System.currentTimeMillis() - avgStart));
+            logger.info("Got " + count + ", time: " + (System.currentTimeMillis() - avgStart) + ", avgId: " + avgId);
         }
         if (IS_TEST_RUN) {
             avgMsgCounter.addAndGet(count);
@@ -412,9 +415,11 @@ public class NewMessageStoreImpl extends MessageStore {
         return count > 0 ? sum / count : 0;
     }
 
-    private SumAndCount getAvgValueNormal(long aMin, long aMax, int tMin, int tMax) {
+    private SumAndCount getAvgValueNormal(int avgId, long aMin, long aMax, int tMin, int tMax) {
+        long avgStart = System.currentTimeMillis();
         long sum = 0;
         int count = 0;
+        int skip = 0;
         long offset = getOffsetByTDiff(tMin);
 
         ByteBuffer aByteBufferForRead = threadBufferForReadA.get();
@@ -430,6 +435,8 @@ public class NewMessageStoreImpl extends MessageStore {
                 if (a >= aMin && a <= aMax) {
                     sum += a;
                     count++;
+                } else {
+                    skip++;
                 }
                 offset++;
                 msgCount--;
@@ -437,12 +444,19 @@ public class NewMessageStoreImpl extends MessageStore {
         }
         aByteBufferForRead.clear();
 
+        if (avgId % AVG_SAMPLE_RATE == 0) {
+            logger.info("Normal got " + count + ", skip: " + skip
+                    + ", time: " + (System.currentTimeMillis() - avgStart) + ", avgId: " + avgId);
+        }
         return new SumAndCount(sum, count);
     }
 
-    private SumAndCount getAvgValueFast(long aMin, long aMax, int tMin, int tMax) {
+    private SumAndCount getAvgValueFast(int avgId, long aMin, long aMax, int tMin, int tMax) {
+        long avgStart = System.currentTimeMillis();
         long sum = 0;
         int count = 0;
+        int skip = 0;
+        int jump = 0;
 
         long[] metaIndex = indexFile.metaIndexList.get(tMin / A_INDEX_BLOCK_SIZE);
         if (metaIndex.length == 0) {
@@ -470,6 +484,7 @@ public class NewMessageStoreImpl extends MessageStore {
             }
             if (index > 0) {
                 startOffset += (index - 1) * A_INDEX_META_FACTOR;
+                jump += (index - 1) * A_INDEX_META_FACTOR;
             }
         }
 
@@ -482,15 +497,22 @@ public class NewMessageStoreImpl extends MessageStore {
             }
             long a = aiByteBufferForRead.getLong();
             if (a > aMax) {
+                jump += (endOffset - offset - 1);
                 break;
             }
             if (a >= aMin) {
                 sum += a;
                 count++;
+            } else {
+                skip++;
             }
         }
         aiByteBufferForRead.clear();
 
+        if (avgId % AVG_SAMPLE_RATE == 0) {
+            logger.info("Fast got " + count + ", skip: " + skip + ", jump: " + jump
+                    + ", time: " + (System.currentTimeMillis() - avgStart) + ", avgId: " + avgId);
+        }
         return new SumAndCount(sum, count);
     }
 

@@ -8,10 +8,7 @@ import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.List;
+import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.LockSupport;
@@ -31,11 +28,9 @@ public class NewMessageStoreImpl extends MessageStore {
     private static final int DATA_SEGMENT_SIZE = 4 * 1024 * 1024;
 //    private static final int DATA_SEGMENT_SIZE = 99 * 1000;
 
-    // TODO split into multiple indexes
-    private static final int T_INDEX_SIZE = 1200 * 1024 * 1024;
     private static final int T_INDEX_SUMMARY_FACTOR = 32;
 
-    private static final int A_INDEX_BLOCK_SIZE = 1024 * 8;
+    private static final int A_INDEX_BLOCK_SIZE = 1024 * 2;
     private static final int A_INDEX_META_FACTOR = 32;
 //    private static final int A_INDEX_BLOCK_SIZE = 1000;
 //    private static final int A_INDEX_META_FACTOR = 10;
@@ -52,15 +47,19 @@ public class NewMessageStoreImpl extends MessageStore {
     private static final int WRITE_BODY_BUFFER_SIZE = BODY_BYTE_LENGTH * 1024;
     private static final int READ_BODY_BUFFER_SIZE = BODY_BYTE_LENGTH * 1024;
 
-    private static volatile long[] threadMinT = new long[PRODUCER_THREAD_NUM];
-    private static volatile long tBase = -1;
+    static {
+        logger.info("LsmMessageStoreImpl class loaded");
+    }
 
     private AtomicInteger putCounter = new AtomicInteger(0);
     private AtomicInteger getCounter = new AtomicInteger(0);
     private AtomicInteger avgCounter = new AtomicInteger(0);
 
     private AtomicInteger threadIdCounter = new AtomicInteger(0);
-    private ThreadLocal<Integer> threadId = ThreadLocal.withInitial(() -> threadIdCounter.getAndIncrement());
+    private ThreadLocal<Integer> threadIdHolder = ThreadLocal.withInitial(() -> threadIdCounter.getAndIncrement());
+
+    private long[] threadMinT = new long[PRODUCER_THREAD_NUM];
+    private long[] threadMaxT = new long[PRODUCER_THREAD_NUM];
 
     private List<DataFile> dataFileList = new ArrayList<>();
     private int dataFileCounter = 0;
@@ -71,11 +70,11 @@ public class NewMessageStoreImpl extends MessageStore {
     private ByteBuffer aiBufferForWrite = ByteBuffer.allocateDirect(WRITE_AI_BUFFER_SIZE);
     private ByteBuffer bodyBufferForWrite = ByteBuffer.allocateDirect(WRITE_BODY_BUFFER_SIZE);
 
-    private short[] tIndex = new short[T_INDEX_SIZE];
-    private int[] tIndexSummary = new int[T_INDEX_SIZE / T_INDEX_SUMMARY_FACTOR];
+    private short[] tIndex;
+    private int[] tIndexSummary;
+    private volatile long tBase = -1;
+    private long tMaxValue = Long.MIN_VALUE;
     private volatile boolean rewriteDone = false;
-
-    private long tMaxSeen = Long.MIN_VALUE;
 
     private ThreadLocal<ByteBuffer> threadBufferForReadA = ThreadLocal.withInitial(()
             -> ByteBuffer.allocateDirect(READ_A_BUFFER_SIZE));
@@ -84,40 +83,35 @@ public class NewMessageStoreImpl extends MessageStore {
     private ThreadLocal<ByteBuffer> threadBufferForReadBody = ThreadLocal.withInitial(()
             -> ByteBuffer.allocateDirect(READ_BODY_BUFFER_SIZE));
 
-    private StageFile[] stageFileList = new StageFile[PRODUCER_THREAD_NUM];
+    private List<StageFile> stageFileList = new LinkedList<>();
 
-    private ThreadLocal<StageFile> threadStageFile = ThreadLocal.withInitial(() -> {
-        StageFile stageFile = new StageFile();
-        int id = threadId.get();
-        RandomAccessFile raf;
-        try {
-            raf = new RandomAccessFile(DATA_DIR + "stage" + id + ".data", "rw");
-        } catch (FileNotFoundException e) {
-            throw new RuntimeException("no file");
+    public NewMessageStoreImpl() {
+        for (int i = 0; i < PRODUCER_THREAD_NUM; i++) {
+            StageFile stageFile = new StageFile();
+            RandomAccessFile raf;
+            try {
+                raf = new RandomAccessFile(DATA_DIR + "stage" + i + ".data", "rw");
+            } catch (FileNotFoundException e) {
+                throw new RuntimeException("no file");
+            }
+            stageFile.fileChannel = raf.getChannel();
+            stageFile.byteBufferForWrite = ByteBuffer.allocateDirect(WRITE_STAGE_BUFFER_SIZE);
+            stageFile.byteBufferForRead = ByteBuffer.allocateDirect(READ_STAGE_BUFFER_SIZE);
+            stageFileList.add(stageFile);
         }
-        stageFile.fileChannel = raf.getChannel();
-        stageFile.byteBufferForWrite = ByteBuffer.allocateDirect(WRITE_STAGE_BUFFER_SIZE);
-        stageFile.byteBufferForRead = ByteBuffer.allocateDirect(READ_STAGE_BUFFER_SIZE);
-        stageFileList[id] = stageFile;
-        return stageFile;
-    });
-
-    static {
         Arrays.fill(threadMinT, -1);
-        logger.info("LsmMessageStoreImpl loaded");
+        Arrays.fill(threadMaxT, -1);
     }
 
     @Override
     public void put(Message message) {
         long putStart = System.nanoTime();
         int putId = putCounter.getAndIncrement();
-        if (putId == 0) {
-            _putStart = System.currentTimeMillis();
-        }
+        int threadId = threadIdHolder.get();
 
         if (tBase < 0) {
-            threadMinT[threadId.get()] = message.getT();
-            logger.info("Set thread minT for " + threadId.get() + ": " + message.getT());
+            threadMinT[threadId] = message.getT();
+            logger.info("Set thread minT for " + threadId + ": " + message.getT());
             if (putId == 0) {
                 long min = Long.MAX_VALUE;
                 for (int i = 0; i < threadMinT.length; i++) {
@@ -134,13 +128,11 @@ public class NewMessageStoreImpl extends MessageStore {
                 }
             }
         }
-
 //        if (putId == 10000 * 10000) {
 //            throw new RuntimeException("" + (System.currentTimeMillis() - _putStart) + ", " + tIndexCounter);
 //        }
-
-        StageFile stageFile = threadStageFile.get();
-        stageFile.writeMessage(message);
+        stageFileList.get(threadId).writeMessage(message);
+        threadMaxT[threadIdHolder.get()] = message.getT();
 
         if (putId % PUT_SAMPLE_RATE == 0) {
             logger.info("Write message to stage file with t: " + message.getT() + ", a: " + message.getA()
@@ -157,18 +149,24 @@ public class NewMessageStoreImpl extends MessageStore {
         DataFile curDataFile = null;
         List<Long> aBuffer = new ArrayList<>(A_INDEX_BLOCK_SIZE);
 
-        for (StageFile stageFile : stageFileList) {
-            stageFile.prepareForRead();
-        }
+        tMaxValue = Arrays.stream(threadMaxT).max().orElse(tMaxValue);
+        logger.info("Determined t max value: " + tMaxValue);
+
+        tIndex = new short[(int) (tMaxValue - tBase + 1)];
+        tIndexSummary = new int[tIndex.length / T_INDEX_SUMMARY_FACTOR + 1];
+        logger.info("Created t index and summary with length: " + tIndex.length);
+
+        List<StageFile> readingFiles = new ArrayList<>(stageFileList);
+        readingFiles.forEach(StageFile::prepareForRead);
 
         while (true) {
-            int doneCount = 0;
             short writeCount = 0;
+            Iterator<StageFile> iterator = readingFiles.iterator();
 
-            for (StageFile stageFile : stageFileList) {
+            while (iterator.hasNext()) {
+                StageFile stageFile = iterator.next();
                 if (stageFile.doneRead) {
-                    doneCount++;
-                    continue;
+                    iterator.remove();
                 }
                 Message head;
                 while ((head = stageFile.peekMessage()) != null && head.getT() == currentT) {
@@ -197,9 +195,8 @@ public class NewMessageStoreImpl extends MessageStore {
                     writeCount++;
                 }
             }
-            if (doneCount == PRODUCER_THREAD_NUM) {
-                tMaxSeen = currentT - 1 + tBase;
-                logger.info("All stage files has been processed, max T: " + tMaxSeen);
+
+            if (readingFiles.isEmpty()) {
                 break;
             }
 
@@ -288,7 +285,7 @@ public class NewMessageStoreImpl extends MessageStore {
         int tDiff = (int) (tMin - tBase);
         long offset = getOffsetByTDiff(tDiff);
 
-        tMax = Math.min(tMax, tMaxSeen);
+        tMax = Math.min(tMax, tMaxValue);
 
         ByteBuffer aByteBufferForRead = threadBufferForReadA.get();
         ByteBuffer bodyByteBufferForRead = threadBufferForReadBody.get();
@@ -377,7 +374,7 @@ public class NewMessageStoreImpl extends MessageStore {
         int count = 0;
 
         int tMinDiff = (int) Math.max(tMin - tBase, 0);
-        int tMaxDiff = (int) (Math.min(tMax, tMaxSeen) - tBase);
+        int tMaxDiff = (int) (Math.min(tMax, tMaxValue) - tBase);
         if (tMaxDiff < 0) {
             return 0;
         }
@@ -558,7 +555,7 @@ public class NewMessageStoreImpl extends MessageStore {
         return new SumAndCount(sum, count);
     }
 
-    private static class StageFile {
+    private class StageFile {
         FileChannel fileChannel;
         ByteBuffer byteBufferForWrite;
         ByteBuffer byteBufferForRead;
@@ -570,7 +567,8 @@ public class NewMessageStoreImpl extends MessageStore {
             if (!byteBufferForWrite.hasRemaining()) {
                 flushBuffer();
             }
-            byteBufferForWrite.putInt((int) (message.getT() - tBase));
+            int tDiff = (int) (message.getT() - tBase);
+            byteBufferForWrite.putInt(tDiff);
             byteBufferForWrite.putLong(message.getA());
             byteBufferForWrite.put(message.getBody());
         }

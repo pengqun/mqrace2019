@@ -35,7 +35,7 @@ public class NewMessageStoreImpl extends MessageStore {
     private static final int T_INDEX_SIZE = 1200 * 1024 * 1024;
     private static final int T_INDEX_SUMMARY_FACTOR = 32;
 
-    private static final int A_INDEX_BLOCK_SIZE = 1024 * 2;
+    private static final int A_INDEX_BLOCK_SIZE = 1024;
     private static final int A_INDEX_META_FACTOR = 32;
 //    private static final int A_INDEX_BLOCK_SIZE = 1000;
 //    private static final int A_INDEX_META_FACTOR = 10;
@@ -216,7 +216,9 @@ public class NewMessageStoreImpl extends MessageStore {
             if (currentT % A_INDEX_BLOCK_SIZE == 0) {
 //                long start = System.nanoTime();
                 int size = aBuffer.size();
-                Collections.sort(aBuffer);
+                if (size > 1) {
+                    Collections.sort(aBuffer);
+                }
 //                if (currentT % (A_INDEX_BLOCK_SIZE * 1024) == 0) {
 //                    logger.info("Sorted " + size + " a, time: " + (System.nanoTime() - start));
 //                }
@@ -363,8 +365,9 @@ public class NewMessageStoreImpl extends MessageStore {
                         + "\tread ai: " + readAICounter.get() + ", used ai: " + usedAICounter.get()
                         + ", skip ai: " + skipAICounter.get() + ", jump ai: " + jumpAICounter.get()
                         + ", ratio: " + ((double) usedAICounter.get() / readAICounter.get()) + "\n"
-                        + "\tfast smaller: " + fastSmallerCounter.get() + ", larger: " + fastLargerCounter.get() + "\n"
-                        + "\tnormal smaller: " + normalSmallerCounter.get() + ", larger: " + normalLargerCounter.get() + "\n"
+                        + "\tcover ratio: " + ((double) usedAICounter.get() / (usedAICounter.get() + usedACounter.get()))+ "\n"
+//                        + "\tfast smaller: " + fastSmallerCounter.get() + ", larger: " + fastLargerCounter.get() + "\n"
+//                        + "\tnormal smaller: " + normalSmallerCounter.get() + ", larger: " + normalLargerCounter.get() + "\n"
                 );
                 throw new RuntimeException(putScore + "/" + getScore + "/" + avgScore);
             }
@@ -434,18 +437,18 @@ public class NewMessageStoreImpl extends MessageStore {
         int count = 0;
         int skip = 0;
 
-        // Filter by a min / max
-        if (tMin < indexFile.metaIndexList.size() * A_INDEX_BLOCK_SIZE) {
-            long[] metaIndex = indexFile.metaIndexList.get(tMin / A_INDEX_BLOCK_SIZE);
-            if (metaIndex[0] > aMax) {
-                normalSmallerCounter.addAndGet(tMax - tMin + 1);
-                return new SumAndCount(0, 0);
-            }
-            if (metaIndex[metaIndex.length - 1] < aMin) {
-                normalLargerCounter.addAndGet(tMax - tMin + 1);
-                return new SumAndCount(0, 0);
-            }
-        }
+//        // Filter by a min / max
+//        if (tMin < indexFile.metaIndexList.size() * A_INDEX_BLOCK_SIZE) {
+//            long[] metaIndex = indexFile.metaIndexList.get(tMin / A_INDEX_BLOCK_SIZE);
+//            if (metaIndex[0] > aMax) {
+//                normalSmallerCounter.addAndGet(tMax - tMin + 1);
+//                return new SumAndCount(0, 0);
+//            }
+//            if (metaIndex[metaIndex.length - 1] < aMin) {
+//                normalLargerCounter.addAndGet(tMax - tMin + 1);
+//                return new SumAndCount(0, 0);
+//            }
+//        }
 
         long offset = getOffsetByTDiff(tMin);
 

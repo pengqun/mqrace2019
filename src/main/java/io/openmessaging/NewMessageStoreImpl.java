@@ -366,10 +366,6 @@ public class NewMessageStoreImpl extends MessageStore {
             return 0;
         }
 
-        if (true) {
-            return getAvgValueNormal(aMin, aMax, tMinDiff, tMaxDiff).toAvg();
-        }
-
         int tStart = tMinDiff - tMinDiff % A_INDEX_BLOCK_SIZE;
         if (tMinDiff != tStart) {
             tStart += A_INDEX_BLOCK_SIZE;
@@ -441,8 +437,6 @@ public class NewMessageStoreImpl extends MessageStore {
         }
         aByteBufferForRead.clear();
 
-        avgMsgCounter.addAndGet(count);
-
         return new SumAndCount(sum, count);
     }
 
@@ -474,7 +468,9 @@ public class NewMessageStoreImpl extends MessageStore {
                     end = index;
                 }
             }
-            startOffset += index * A_INDEX_META_FACTOR;
+            if (index > 0) {
+                startOffset += (index - 1) * A_INDEX_META_FACTOR;
+            }
         }
 
         ByteBuffer aiByteBufferForRead = threadBufferForReadAI.get();
@@ -488,8 +484,10 @@ public class NewMessageStoreImpl extends MessageStore {
             if (a > aMax) {
                 break;
             }
-            sum += a;
-            count++;
+            if (a >= aMin) {
+                sum += a;
+                count++;
+            }
         }
         aiByteBufferForRead.clear();
 

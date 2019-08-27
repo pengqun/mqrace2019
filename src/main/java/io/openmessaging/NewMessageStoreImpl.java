@@ -35,7 +35,7 @@ public class NewMessageStoreImpl extends MessageStore {
     private static final int T_INDEX_SIZE = 1200 * 1024 * 1024;
     private static final int T_INDEX_SUMMARY_FACTOR = 32;
 
-    private static final int A_INDEX_BLOCK_SIZE = 1024;
+    private static final int A_INDEX_BLOCK_SIZE = 1024 * 8;
     private static final int A_INDEX_META_FACTOR = 32;
 //    private static final int A_INDEX_BLOCK_SIZE = 1000;
 //    private static final int A_INDEX_META_FACTOR = 10;
@@ -44,10 +44,10 @@ public class NewMessageStoreImpl extends MessageStore {
     private static final int READ_STAGE_BUFFER_SIZE = MSG_BYTE_LENGTH * 1024;
 
     private static final int WRITE_A_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024;
-    private static final int READ_A_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 512;
+    private static final int READ_A_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024;
 
     private static final int WRITE_AI_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024;
-    private static final int READ_AI_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 512;
+    private static final int READ_AI_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024;
 
     private static final int WRITE_BODY_BUFFER_SIZE = BODY_BYTE_LENGTH * 1024;
     private static final int READ_BODY_BUFFER_SIZE = BODY_BYTE_LENGTH * 1024;

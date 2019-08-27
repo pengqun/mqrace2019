@@ -24,6 +24,7 @@ import static io.openmessaging.Constants.*;
 /**
  * @author .ignore 2019-07-29
  */
+@SuppressWarnings("DuplicatedCode")
 public class LsmMessageStoreImpl extends MessageStore {
 
     private static final Logger logger = Logger.getLogger(LsmMessageStoreImpl.class);

@@ -35,7 +35,7 @@ public class NewMessageStoreImpl extends MessageStore {
     private static final int T_INDEX_SIZE = 1200 * 1024 * 1024;
     private static final int T_INDEX_SUMMARY_FACTOR = 32;
 
-    private static final int A_INDEX_BLOCK_SIZE = 1024 * 4;
+    private static final int A_INDEX_BLOCK_SIZE = 1024 * 2;
     private static final int A_INDEX_META_FACTOR = 32;
 //    private static final int A_INDEX_BLOCK_SIZE = 1000;
 //    private static final int A_INDEX_META_FACTOR = 10;
@@ -477,6 +477,7 @@ public class NewMessageStoreImpl extends MessageStore {
             throw new RuntimeException("empty meta index: " + tMin);
         }
         if (metaIndex[0] > aMax) {
+            logger.info("Fast skip by smaller range");
             return new SumAndCount(0, 0);
         }
 
@@ -757,10 +758,6 @@ public class NewMessageStoreImpl extends MessageStore {
         SumAndCount(long sum, long count) {
             this.sum = sum;
             this.count = count;
-        }
-
-        long toAvg() {
-            return count > 0 ? sum / count : 0;
         }
     }
 

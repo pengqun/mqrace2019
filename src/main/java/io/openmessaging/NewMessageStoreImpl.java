@@ -47,7 +47,7 @@ public class NewMessageStoreImpl extends MessageStore {
     private static final int READ_A_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 512;
 
     private static final int WRITE_AI_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024;
-    private static final int READ_AI_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 128;
+    private static final int READ_AI_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024;
 
     private static final int WRITE_BODY_BUFFER_SIZE = BODY_BYTE_LENGTH * 1024;
     private static final int READ_BODY_BUFFER_SIZE = BODY_BYTE_LENGTH * 1024;
@@ -354,6 +354,14 @@ public class NewMessageStoreImpl extends MessageStore {
                         + "\tavg: " + avgMsgCounter.get() + " / " + avgDuration + "ms = " + avgScore + "\n"
                         + "\ttotal: " + totalScore + "\n"
                 );
+                logger.info("Avg result: \n"
+                        + "\tread a: " + readACounter.get() + ", used a: " + usedACounter.get()
+                        + ", skip a: " + skipACounter.get()
+                        + ", ratio: " + ((double) usedACounter.get() / readACounter.get()) + "\n"
+                        + "\tread ai: " + readAICounter.get() + ", used ai: " + usedAICounter.get()
+                        + ", skip ai: " + skipAICounter.get() + ", jump ai: " + jumpAICounter.get()
+                        + ", ratio: " + ((double) usedAICounter.get() / readAICounter.get()) + "\n"
+                );
                 throw new RuntimeException(putScore + "/" + getScore + "/" + avgScore);
             }
         }
@@ -418,6 +426,7 @@ public class NewMessageStoreImpl extends MessageStore {
     private SumAndCount getAvgValueNormal(int avgId, long aMin, long aMax, int tMin, int tMax) {
         long avgStart = System.currentTimeMillis();
         long sum = 0;
+        int read = 0;
         int count = 0;
         int skip = 0;
         long offset = getOffsetByTDiff(tMin);
@@ -429,7 +438,7 @@ public class NewMessageStoreImpl extends MessageStore {
             int msgCount = tIndex[t];
             while (msgCount > 0) {
                 if (aByteBufferForRead.remaining() == 0) {
-                    fillReadABuffer(aByteBufferForRead, offset);
+                    read += fillReadABuffer(aByteBufferForRead, offset);
                 }
                 long a = aByteBufferForRead.getLong();
                 if (a >= aMin && a <= aMax) {
@@ -444,6 +453,10 @@ public class NewMessageStoreImpl extends MessageStore {
         }
         aByteBufferForRead.clear();
 
+        readACounter.addAndGet(read / KEY_A_BYTE_LENGTH);
+        usedACounter.addAndGet(count);
+        skipACounter.addAndGet(skip);
+
         if (avgId % AVG_SAMPLE_RATE == 0) {
             logger.info("Normal got " + count + ", skip: " + skip
                     + ", time: " + (System.currentTimeMillis() - avgStart) + ", avgId: " + avgId);
@@ -454,6 +467,7 @@ public class NewMessageStoreImpl extends MessageStore {
     private SumAndCount getAvgValueFast(int avgId, long aMin, long aMax, int tMin, int tMax) {
         long avgStart = System.currentTimeMillis();
         long sum = 0;
+        int read = 0;
         int count = 0;
         int skip = 0;
         int jump = 0;
@@ -493,7 +507,7 @@ public class NewMessageStoreImpl extends MessageStore {
 
         for (long offset = startOffset; offset < endOffset; offset++) {
             if (aiByteBufferForRead.remaining() == 0) {
-                fillReadAIBuffer(aiByteBufferForRead, offset);
+                read += fillReadAIBuffer(aiByteBufferForRead, offset);
             }
             long a = aiByteBufferForRead.getLong();
             if (a > aMax) {
@@ -508,6 +522,11 @@ public class NewMessageStoreImpl extends MessageStore {
             }
         }
         aiByteBufferForRead.clear();
+
+        readAICounter.addAndGet(read / KEY_A_BYTE_LENGTH);
+        usedAICounter.addAndGet(count);
+        skipAICounter.addAndGet(skip);
+        jumpAICounter.addAndGet(jump);
 
         if (avgId % AVG_SAMPLE_RATE == 0) {
             logger.info("Fast got " + count + ", skip: " + skip + ", jump: " + jump
@@ -597,24 +616,26 @@ public class NewMessageStoreImpl extends MessageStore {
         }
     }
 
-    private void fillReadABuffer(ByteBuffer readABuffer, long offset) {
+    private int fillReadABuffer(ByteBuffer readABuffer, long offset) {
         DataFile dataFile = dataFileList.get((int) (offset / DATA_SEGMENT_SIZE));
         try {
             readABuffer.clear();
-            dataFile.aChannel.read(readABuffer, (offset - dataFile.start) * KEY_A_BYTE_LENGTH);
+            int nBytes = dataFile.aChannel.read(readABuffer, (offset - dataFile.start) * KEY_A_BYTE_LENGTH);
             readABuffer.flip();
+            return nBytes;
         } catch (IOException e) {
-            e.printStackTrace();
+            throw new RuntimeException("read error");
         }
     }
 
-    private void fillReadAIBuffer(ByteBuffer readAIBuffer, long offset) {
+    private int fillReadAIBuffer(ByteBuffer readAIBuffer, long offset) {
         try {
             readAIBuffer.clear();
-            indexFile.aiChannel.read(readAIBuffer, offset * KEY_A_BYTE_LENGTH);
+            int nBytes = indexFile.aiChannel.read(readAIBuffer, offset * KEY_A_BYTE_LENGTH);
             readAIBuffer.flip();
+            return nBytes;
         } catch (IOException e) {
-            e.printStackTrace();
+            throw new RuntimeException("read error");
         }
     }
 
@@ -750,6 +771,14 @@ public class NewMessageStoreImpl extends MessageStore {
 
     private AtomicLong getMsgCounter = new AtomicLong(0);
     private AtomicLong avgMsgCounter = new AtomicLong(0);
+
+    private AtomicInteger readACounter  = new AtomicInteger(0);
+    private AtomicInteger usedACounter  = new AtomicInteger(0);
+    private AtomicInteger skipACounter = new AtomicInteger(0);
+    private AtomicInteger readAICounter  = new AtomicInteger(0);
+    private AtomicInteger usedAICounter  = new AtomicInteger(0);
+    private AtomicInteger skipAICounter  = new AtomicInteger(0);
+    private AtomicInteger jumpAICounter  = new AtomicInteger(0);
 
     private long _putStart = 0;
     private long _putEnd = 0;

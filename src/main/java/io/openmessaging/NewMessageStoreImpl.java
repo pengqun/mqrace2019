@@ -47,7 +47,7 @@ public class NewMessageStoreImpl extends MessageStore {
     private static final int READ_A_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 512;
 
     private static final int WRITE_AI_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024;
-    private static final int READ_AI_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024;
+    private static final int READ_AI_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 256;
 
     private static final int WRITE_BODY_BUFFER_SIZE = BODY_BYTE_LENGTH * 1024;
     private static final int READ_BODY_BUFFER_SIZE = BODY_BYTE_LENGTH * 1024;
@@ -366,7 +366,7 @@ public class NewMessageStoreImpl extends MessageStore {
                         + ", skip ai: " + skipAICounter.get() + ", jump ai: " + jumpAICounter.get()
                         + ", ratio: " + ((double) usedAICounter.get() / readAICounter.get()) + "\n"
                         + "\tcover ratio: " + ((double) usedAICounter.get() / (usedAICounter.get() + usedACounter.get()))+ "\n"
-//                        + "\tfast smaller: " + fastSmallerCounter.get() + ", larger: " + fastLargerCounter.get() + "\n"
+                        + "\tfast smaller: " + fastSmallerCounter.get() + ", larger: " + fastLargerCounter.get() + "\n"
 //                        + "\tnormal smaller: " + normalSmallerCounter.get() + ", larger: " + normalLargerCounter.get() + "\n"
                 );
                 throw new RuntimeException(putScore + "/" + getScore + "/" + avgScore);

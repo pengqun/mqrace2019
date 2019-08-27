@@ -366,6 +366,10 @@ public class NewMessageStoreImpl extends MessageStore {
             return 0;
         }
 
+        if (true) {
+            return getAvgValueNormal(aMin, aMax, tMinDiff, tMaxDiff).toAvg();
+        }
+
         int tStart = tMinDiff - tMinDiff % A_INDEX_BLOCK_SIZE;
         if (tMinDiff != tStart) {
             tStart += A_INDEX_BLOCK_SIZE;
@@ -436,6 +440,8 @@ public class NewMessageStoreImpl extends MessageStore {
             }
         }
         aByteBufferForRead.clear();
+
+        avgMsgCounter.addAndGet(count);
 
         return new SumAndCount(sum, count);
     }
@@ -710,6 +716,10 @@ public class NewMessageStoreImpl extends MessageStore {
         SumAndCount(long sum, long count) {
             this.sum = sum;
             this.count = count;
+        }
+
+        long toAvg() {
+            return count > 0 ? sum / count : 0;
         }
     }
 

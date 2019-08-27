@@ -198,7 +198,7 @@ public class NewMessageStoreImpl extends MessageStore {
                 }
             }
             if (doneCount == PRODUCER_THREAD_NUM) {
-                tMaxSeen = currentT - 1;
+                tMaxSeen = currentT - 1 + tBase;
                 logger.info("All stage files has been processed, max T: " + tMaxSeen);
                 break;
             }

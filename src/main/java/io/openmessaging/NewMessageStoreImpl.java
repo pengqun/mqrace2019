@@ -220,7 +220,7 @@ public class NewMessageStoreImpl extends MessageStore {
 //                if (currentT % (A_INDEX_BLOCK_SIZE * 1024) == 0) {
 //                    logger.info("Sorted " + size + " a, time: " + (System.nanoTime() - start));
 //                }
-                long[] metaIndex = new long[(size - 1) / A_INDEX_META_FACTOR + 1];
+                long[] metaIndex = new long[(size - 1) / A_INDEX_META_FACTOR + 1 + 1];
                 for (int i = 0; i < size; i++) {
                     long a = aBuffer.get(i);
                     indexFile.writeA(a);
@@ -228,6 +228,8 @@ public class NewMessageStoreImpl extends MessageStore {
                         metaIndex[i / A_INDEX_META_FACTOR] = a;
                     }
                 }
+                // Store max a in last element
+                metaIndex[metaIndex.length - 1] = aBuffer.get(size - 1);
                 indexFile.metaIndexList.add(metaIndex);
                 aBuffer.clear();
             }
@@ -361,6 +363,8 @@ public class NewMessageStoreImpl extends MessageStore {
                         + "\tread ai: " + readAICounter.get() + ", used ai: " + usedAICounter.get()
                         + ", skip ai: " + skipAICounter.get() + ", jump ai: " + jumpAICounter.get()
                         + ", ratio: " + ((double) usedAICounter.get() / readAICounter.get()) + "\n"
+                        + "\tfast smaller: " + fastSmallerCounter.get() + ", larger: " + fastLargerCounter.get() + "\n"
+                        + "\tnormal smaller: " + normalSmallerCounter.get() + ", larger: " + normalLargerCounter.get() + "\n"
                 );
                 throw new RuntimeException(putScore + "/" + getScore + "/" + avgScore);
             }
@@ -429,6 +433,20 @@ public class NewMessageStoreImpl extends MessageStore {
         int read = 0;
         int count = 0;
         int skip = 0;
+
+        // Filter by a min / max
+        if (tMin < indexFile.metaIndexList.size() * A_INDEX_BLOCK_SIZE) {
+            long[] metaIndex = indexFile.metaIndexList.get(tMin / A_INDEX_BLOCK_SIZE);
+            if (metaIndex[0] > aMax) {
+                normalSmallerCounter.addAndGet(tMax - tMin + 1);
+                return new SumAndCount(0, 0);
+            }
+            if (metaIndex[metaIndex.length - 1] < aMin) {
+                normalLargerCounter.addAndGet(tMax - tMin + 1);
+                return new SumAndCount(0, 0);
+            }
+        }
+
         long offset = getOffsetByTDiff(tMin);
 
         ByteBuffer aByteBufferForRead = threadBufferForReadA.get();
@@ -473,11 +491,12 @@ public class NewMessageStoreImpl extends MessageStore {
         int jump = 0;
 
         long[] metaIndex = indexFile.metaIndexList.get(tMin / A_INDEX_BLOCK_SIZE);
-        if (metaIndex.length == 0) {
-            throw new RuntimeException("empty meta index: " + tMin);
-        }
         if (metaIndex[0] > aMax) {
-            logger.info("Fast skip by smaller range");
+            fastSmallerCounter.addAndGet(A_INDEX_BLOCK_SIZE);
+            return new SumAndCount(0, 0);
+        }
+        if (metaIndex[metaIndex.length - 1] < aMin) {
+            fastLargerCounter.addAndGet(A_INDEX_BLOCK_SIZE);
             return new SumAndCount(0, 0);
         }
 
@@ -486,7 +505,7 @@ public class NewMessageStoreImpl extends MessageStore {
 
         if (metaIndex[0] < aMin) {
             int start = 0;
-            int end = metaIndex.length - 1;
+            int end = metaIndex.length - 2;
             int index = 0;
             while (start < end) {
                 index = (start + end) / 2;
@@ -776,6 +795,10 @@ public class NewMessageStoreImpl extends MessageStore {
     private AtomicInteger usedAICounter  = new AtomicInteger(0);
     private AtomicInteger skipAICounter  = new AtomicInteger(0);
     private AtomicInteger jumpAICounter  = new AtomicInteger(0);
+    private AtomicInteger normalSmallerCounter = new AtomicInteger(0);
+    private AtomicInteger normalLargerCounter = new AtomicInteger(0);
+    private AtomicInteger fastSmallerCounter = new AtomicInteger(0);
+    private AtomicInteger fastLargerCounter = new AtomicInteger(0);
 
     private long _putStart = 0;
     private long _putEnd = 0;

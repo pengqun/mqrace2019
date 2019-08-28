@@ -39,13 +39,13 @@ public class NewMessageStoreImpl extends MessageStore {
     private static final int READ_STAGE_BUFFER_SIZE = MSG_BYTE_LENGTH * 1024;
 
     private static final int WRITE_A_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024;
-    private static final int READ_A_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024 * 2;
+    private static final int READ_A_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024 * 4;
 
     private static final int WRITE_AI_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024;
-    private static final int READ_AI_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024 * 2;
+    private static final int READ_AI_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024 * 4;
 
     private static final int WRITE_BODY_BUFFER_SIZE = BODY_BYTE_LENGTH * 1024;
-    private static final int READ_BODY_BUFFER_SIZE = BODY_BYTE_LENGTH * 1024 * 2;
+    private static final int READ_BODY_BUFFER_SIZE = BODY_BYTE_LENGTH * 1024 * 4;
 
     static {
         logger.info("LsmMessageStoreImpl class loaded");

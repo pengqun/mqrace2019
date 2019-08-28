@@ -39,13 +39,13 @@ public class NewMessageStoreImpl extends MessageStore {
     private static final int READ_STAGE_BUFFER_SIZE = MSG_BYTE_LENGTH * 1024;
 
     private static final int WRITE_A_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024;
-    private static final int READ_A_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024;
+    private static final int READ_A_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024 * 2;
 
     private static final int WRITE_AI_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024;
-    private static final int READ_AI_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024;
+    private static final int READ_AI_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024 * 2;
 
     private static final int WRITE_BODY_BUFFER_SIZE = BODY_BYTE_LENGTH * 1024;
-    private static final int READ_BODY_BUFFER_SIZE = BODY_BYTE_LENGTH * 1024;
+    private static final int READ_BODY_BUFFER_SIZE = BODY_BYTE_LENGTH * 1024 * 2;
 
     static {
         logger.info("LsmMessageStoreImpl class loaded");
@@ -111,7 +111,7 @@ public class NewMessageStoreImpl extends MessageStore {
 
         if (tBase < 0) {
             threadMinT[threadId] = message.getT();
-            logger.info("Set thread minT for " + threadId + ": " + message.getT());
+//            logger.info("Set thread minT for " + threadId + ": " + message.getT());
             if (putId == 0) {
                 _putStart = System.currentTimeMillis();
                 long min = Long.MAX_VALUE;
@@ -353,12 +353,6 @@ public class NewMessageStoreImpl extends MessageStore {
                 int getScore = (int) (getMsgCounter.get() / getDuration);
                 int avgScore = (int) (avgMsgCounter.get() / avgDuration);
                 int totalScore = putScore + getScore + avgScore;
-                logger.info("Test result: \n"
-                        + "\tput: " + putCounter.get() + " / " + putDuration + "ms = " + putScore + "\n"
-                        + "\tget: " + getMsgCounter.get() + " / " + getDuration + "ms = " + getScore + "\n"
-                        + "\tavg: " + avgMsgCounter.get() + " / " + avgDuration + "ms = " + avgScore + "\n"
-                        + "\ttotal: " + totalScore + "\n"
-                );
                 logger.info("Avg result: \n"
                         + "\tread a: " + readACounter.get() + ", used a: " + usedACounter.get()
                         + ", skip a: " + skipACounter.get()
@@ -370,7 +364,12 @@ public class NewMessageStoreImpl extends MessageStore {
                         + ", visit ratio: " + ((double) (usedAICounter.get() + skipAICounter.get()) / readAICounter.get()) + "\n"
                         + "\tcover ratio: " + ((double) usedAICounter.get() / (usedAICounter.get() + usedACounter.get()))+ "\n"
                         + "\tfast smaller: " + fastSmallerCounter.get() + ", larger: " + fastLargerCounter.get() + "\n"
-                        + "\tnormal smaller: " + normalSmallerCounter.get() + ", larger: " + normalLargerCounter.get() + "\n"
+                );
+                logger.info("Test result: \n"
+                        + "\tput: " + putCounter.get() + " / " + putDuration + "ms = " + putScore + "\n"
+                        + "\tget: " + getMsgCounter.get() + " / " + getDuration + "ms = " + getScore + "\n"
+                        + "\tavg: " + avgMsgCounter.get() + " / " + avgDuration + "ms = " + avgScore + "\n"
+                        + "\ttotal: " + totalScore + "\n"
                 );
                 throw new RuntimeException(putScore + "/" + getScore + "/" + avgScore);
             }
@@ -439,19 +438,6 @@ public class NewMessageStoreImpl extends MessageStore {
         int read = 0;
         int count = 0;
         int skip = 0;
-
-//        // Filter by a min / max
-//        if (tMin < indexFile.metaIndexList.size() * A_INDEX_BLOCK_SIZE) {
-//            long[] metaIndex = indexFile.metaIndexList.get(tMin / A_INDEX_BLOCK_SIZE);
-//            if (metaIndex[0] > aMax) {
-//                normalSmallerCounter.addAndGet(tMax - tMin + 1);
-//                return new SumAndCount(0, 0);
-//            }
-//            if (metaIndex[metaIndex.length - 1] < aMin) {
-//                normalLargerCounter.addAndGet(tMax - tMin + 1);
-//                return new SumAndCount(0, 0);
-//            }
-//        }
 
         long offset = getOffsetByTDiff(tMin);
         long endOffset = getOffsetByTDiff(tMax + 1);
@@ -675,7 +661,9 @@ public class NewMessageStoreImpl extends MessageStore {
         DataFile dataFile = dataFileList.get((int) (offset / DATA_SEGMENT_SIZE));
         try {
             readABuffer.clear();
-            readABuffer.limit(Math.min(READ_A_BUFFER_SIZE, (int) (endOffset - offset) * KEY_A_BYTE_LENGTH));
+            if ((endOffset - offset) * KEY_A_BYTE_LENGTH < READ_AI_BUFFER_SIZE) {
+                readABuffer.limit((int) (endOffset - offset) * KEY_A_BYTE_LENGTH);
+            }
             int nBytes = dataFile.aChannel.read(readABuffer, (offset - dataFile.start) * KEY_A_BYTE_LENGTH);
             readABuffer.flip();
             return nBytes;
@@ -687,7 +675,9 @@ public class NewMessageStoreImpl extends MessageStore {
     private int fillReadAIBuffer(ByteBuffer readAIBuffer, long offset, long endOffset) {
         try {
             readAIBuffer.clear();
-            readAIBuffer.limit(Math.min(READ_AI_BUFFER_SIZE, (int) (endOffset - offset) * KEY_A_BYTE_LENGTH));
+            if ((endOffset - offset) * KEY_A_BYTE_LENGTH < READ_AI_BUFFER_SIZE) {
+                readAIBuffer.limit((int) (endOffset - offset) * KEY_A_BYTE_LENGTH);
+            }
             int nBytes = indexFile.aiChannel.read(readAIBuffer, offset * KEY_A_BYTE_LENGTH);
             readAIBuffer.flip();
             return nBytes;
@@ -700,7 +690,9 @@ public class NewMessageStoreImpl extends MessageStore {
         DataFile dataFile = dataFileList.get((int) (offset / DATA_SEGMENT_SIZE));
         try {
             readBodyBuffer.clear();
-            readBodyBuffer.limit(Math.min(READ_BODY_BUFFER_SIZE, (int) (endOffset - offset) * BODY_BYTE_LENGTH));
+            if ((endOffset - offset) * BODY_BYTE_LENGTH < READ_BODY_BUFFER_SIZE) {
+                readBodyBuffer.limit((int) (endOffset - offset) * BODY_BYTE_LENGTH);
+            }
             dataFile.bodyChannel.read(readBodyBuffer, (offset - dataFile.start) * BODY_BYTE_LENGTH);
             readBodyBuffer.flip();
         } catch (IOException e) {
@@ -818,8 +810,8 @@ public class NewMessageStoreImpl extends MessageStore {
         }
     }
 
-    private static final int PUT_SAMPLE_RATE = 10000000;
-    private static final int REWRITE_SAMPLE_RATE = 10000000;
+    private static final int PUT_SAMPLE_RATE = 100000000;
+    private static final int REWRITE_SAMPLE_RATE = 100000000;
     private static final int GET_SAMPLE_RATE = 1000;
     private static final int AVG_SAMPLE_RATE = 1000;
 
@@ -835,8 +827,6 @@ public class NewMessageStoreImpl extends MessageStore {
     private AtomicInteger jump1AICounter  = new AtomicInteger(0);
     private AtomicInteger jump2AICounter  = new AtomicInteger(0);
     private AtomicInteger jump3AICounter  = new AtomicInteger(0);
-    private AtomicInteger normalSmallerCounter = new AtomicInteger(0);
-    private AtomicInteger normalLargerCounter = new AtomicInteger(0);
     private AtomicInteger fastSmallerCounter = new AtomicInteger(0);
     private AtomicInteger fastLargerCounter = new AtomicInteger(0);
 

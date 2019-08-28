@@ -499,32 +499,27 @@ public class NewMessageStoreImpl extends MessageStore {
         long endOffset = fullEndOffset;
 
         // binary search for start
-        int index = 0;
+        int start = 0;
         if (metaIndex[0] < aMin) {
-            int start = 0;
             int end = metaIndex.length - 2;
             while (start < end) {
-                index = (start + end) / 2;
-                long a = metaIndex[index];
-                if (a < aMin) {
+                int index = (start + end) / 2;
+                if (metaIndex[index] < aMin) {
                     start = index + 1;
                 } else {
                     end = index;
                 }
             }
-            if (index > 0) {
-                startOffset += (index - 1) * A_INDEX_META_FACTOR;
-            }
+            start = Math.max(start - 1, 0);
+            startOffset += start * A_INDEX_META_FACTOR;
         }
 
         // binary search for end
         if (metaIndex[metaIndex.length - 2] > aMax) {
-            int start = index > 0 ? index - 1 : 0;
             int end = metaIndex.length - 2;
             while (start < end) {
-                index = (start + end) / 2;
-                long a = metaIndex[index];
-                if (a <= aMax) {
+                int index = (start + end) / 2;
+                if (metaIndex[index] <= aMax) {
                     start = index + 1;
                 } else {
                     end = index;

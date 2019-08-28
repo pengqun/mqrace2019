@@ -31,7 +31,7 @@ public class NewMessageStoreImpl extends MessageStore {
     private static final int T_INDEX_SUMMARY_FACTOR = 32;
 
     private static final int A_INDEX_BLOCK_SIZE = 1024 * 2;
-    private static final int A_INDEX_META_FACTOR = 32;
+    private static final int A_INDEX_META_FACTOR = 16;
 //    private static final int A_INDEX_BLOCK_SIZE = 1000;
 //    private static final int A_INDEX_META_FACTOR = 10;
 
@@ -303,8 +303,6 @@ public class NewMessageStoreImpl extends MessageStore {
                 long a = aByteBufferForRead.getLong();
                 if (a >= aMin && a <= aMax) {
                     if (!bodyByteBufferForRead.hasRemaining()) {
-                        int limit = Math.min(READ_BODY_BUFFER_SIZE, (int) (endOffset - offset) * BODY_BYTE_LENGTH);
-                        bodyByteBufferForRead.limit(limit);
                         fillReadBodyBuffer(bodyByteBufferForRead, offset, endOffset);
                     }
                     byte[] body = new byte[BODY_BYTE_LENGTH];

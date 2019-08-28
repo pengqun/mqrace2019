@@ -113,6 +113,7 @@ public class NewMessageStoreImpl extends MessageStore {
             threadMinT[threadId] = message.getT();
             logger.info("Set thread minT for " + threadId + ": " + message.getT());
             if (putId == 0) {
+                _putStart = System.currentTimeMillis();
                 long min = Long.MAX_VALUE;
                 for (int i = 0; i < threadMinT.length; i++) {
                     while (threadMinT[i] < 0) {
@@ -281,11 +282,12 @@ public class NewMessageStoreImpl extends MessageStore {
             }
         }
 
-        ArrayList<Message> result = new ArrayList<>(4096);
+        tMax = Math.min(tMax, tMaxValue);
+
+        ArrayList<Message> result = new ArrayList<>();
         int tDiff = (int) (tMin - tBase);
         long offset = getOffsetByTDiff(tDiff);
-
-        tMax = Math.min(tMax, tMaxValue);
+        long endOffset = getOffsetByTDiff((int) (tMax - tBase + 1));
 
         ByteBuffer aByteBufferForRead = threadBufferForReadA.get();
         ByteBuffer bodyByteBufferForRead = threadBufferForReadBody.get();
@@ -296,11 +298,15 @@ public class NewMessageStoreImpl extends MessageStore {
             int msgCount = tIndex[tDiff++];
             while (msgCount > 0) {
                 if (!aByteBufferForRead.hasRemaining()) {
+                    int limit = Math.min(READ_A_BUFFER_SIZE, (int) (endOffset - offset) * KEY_A_BYTE_LENGTH);
+                    aByteBufferForRead.limit(limit);
                     fillReadABuffer(aByteBufferForRead, offset);
                 }
                 long a = aByteBufferForRead.getLong();
                 if (a >= aMin && a <= aMax) {
                     if (!bodyByteBufferForRead.hasRemaining()) {
+                        int limit = Math.min(READ_BODY_BUFFER_SIZE, (int) (endOffset - offset) * BODY_BYTE_LENGTH);
+                        bodyByteBufferForRead.limit(limit);
                         fillReadBodyBuffer(bodyByteBufferForRead, offset);
                     }
                     byte[] body = new byte[BODY_BYTE_LENGTH];
@@ -358,13 +364,15 @@ public class NewMessageStoreImpl extends MessageStore {
                 logger.info("Avg result: \n"
                         + "\tread a: " + readACounter.get() + ", used a: " + usedACounter.get()
                         + ", skip a: " + skipACounter.get()
-                        + ", ratio: " + ((double) usedACounter.get() / readACounter.get()) + "\n"
+                        + ", use ratio: " + ((double) usedACounter.get() / readACounter.get())
+                        + ", visit ratio: " + ((double) (usedACounter.get() + skipACounter.get()) / readACounter.get()) + "\n"
                         + "\tread ai: " + readAICounter.get() + ", used ai: " + usedAICounter.get()
-                        + ", skip ai: " + skipAICounter.get() + ", jump ai: " + jumpAICounter.get()
-                        + ", ratio: " + ((double) usedAICounter.get() / readAICounter.get()) + "\n"
+                        + ", skip ai: " + skipAICounter.get() + ", jump ai: " + jump1AICounter.get() + " - " + jump2AICounter.get()
+                        + ", use ratio: " + ((double) usedAICounter.get() / readAICounter.get()) + "\n"
+                        + ", visit ratio: " + ((double) (usedAICounter.get() + skipAICounter.get()) / readAICounter.get()) + "\n"
                         + "\tcover ratio: " + ((double) usedAICounter.get() / (usedAICounter.get() + usedACounter.get()))+ "\n"
                         + "\tfast smaller: " + fastSmallerCounter.get() + ", larger: " + fastLargerCounter.get() + "\n"
-//                        + "\tnormal smaller: " + normalSmallerCounter.get() + ", larger: " + normalLargerCounter.get() + "\n"
+                        + "\tnormal smaller: " + normalSmallerCounter.get() + ", larger: " + normalLargerCounter.get() + "\n"
                 );
                 throw new RuntimeException(putScore + "/" + getScore + "/" + avgScore);
             }
@@ -448,6 +456,7 @@ public class NewMessageStoreImpl extends MessageStore {
 //        }
 
         long offset = getOffsetByTDiff(tMin);
+        long endOffset = getOffsetByTDiff(tMax + 1);
 
         ByteBuffer aByteBufferForRead = threadBufferForReadA.get();
         aByteBufferForRead.flip();
@@ -456,6 +465,8 @@ public class NewMessageStoreImpl extends MessageStore {
             int msgCount = tIndex[t];
             while (msgCount > 0) {
                 if (aByteBufferForRead.remaining() == 0) {
+                    int limit = Math.min(READ_A_BUFFER_SIZE, (int) (endOffset - offset) * KEY_A_BYTE_LENGTH);
+                    aByteBufferForRead.limit(limit);
                     read += fillReadABuffer(aByteBufferForRead, offset);
                 }
                 long a = aByteBufferForRead.getLong();
@@ -488,7 +499,8 @@ public class NewMessageStoreImpl extends MessageStore {
         int read = 0;
         int count = 0;
         int skip = 0;
-        int jump = 0;
+        int jump1 = 0;
+        int jump2 = 0;
 
         long[] metaIndex = indexFile.metaIndexList.get(tMin / A_INDEX_BLOCK_SIZE);
         if (metaIndex[0] > aMax) {
@@ -518,7 +530,7 @@ public class NewMessageStoreImpl extends MessageStore {
             }
             if (index > 0) {
                 startOffset += (index - 1) * A_INDEX_META_FACTOR;
-                jump += (index - 1) * A_INDEX_META_FACTOR;
+                jump1 += (index - 1) * A_INDEX_META_FACTOR;
             }
         }
 
@@ -527,11 +539,13 @@ public class NewMessageStoreImpl extends MessageStore {
 
         for (long offset = startOffset; offset < endOffset; offset++) {
             if (aiByteBufferForRead.remaining() == 0) {
+                int limit = Math.min(READ_AI_BUFFER_SIZE, (int) (endOffset - offset) * KEY_A_BYTE_LENGTH);
+                aiByteBufferForRead.limit(limit);
                 read += fillReadAIBuffer(aiByteBufferForRead, offset);
             }
             long a = aiByteBufferForRead.getLong();
             if (a > aMax) {
-                jump += (endOffset - offset - 1);
+                jump2 += (endOffset - offset - 1);
                 break;
             }
             if (a >= aMin) {
@@ -546,10 +560,11 @@ public class NewMessageStoreImpl extends MessageStore {
         readAICounter.addAndGet(read / KEY_A_BYTE_LENGTH);
         usedAICounter.addAndGet(count);
         skipAICounter.addAndGet(skip);
-        jumpAICounter.addAndGet(jump);
+        jump1AICounter.addAndGet(jump1);
+        jump2AICounter.addAndGet(jump2);
 
         if (avgId % AVG_SAMPLE_RATE == 0) {
-            logger.info("Fast got " + count + ", skip: " + skip + ", jump: " + jump
+            logger.info("Fast got " + count + ", skip: " + skip + ", jump: " + jump1 + " - " + jump2
                     + ", time: " + (System.currentTimeMillis() - avgStart) + ", avgId: " + avgId);
         }
         return new SumAndCount(sum, count);
@@ -795,7 +810,8 @@ public class NewMessageStoreImpl extends MessageStore {
     private AtomicInteger readAICounter  = new AtomicInteger(0);
     private AtomicInteger usedAICounter  = new AtomicInteger(0);
     private AtomicInteger skipAICounter  = new AtomicInteger(0);
-    private AtomicInteger jumpAICounter  = new AtomicInteger(0);
+    private AtomicInteger jump1AICounter  = new AtomicInteger(0);
+    private AtomicInteger jump2AICounter  = new AtomicInteger(0);
     private AtomicInteger normalSmallerCounter = new AtomicInteger(0);
     private AtomicInteger normalLargerCounter = new AtomicInteger(0);
     private AtomicInteger fastSmallerCounter = new AtomicInteger(0);

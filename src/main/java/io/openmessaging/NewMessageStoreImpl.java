@@ -298,16 +298,14 @@ public class NewMessageStoreImpl extends MessageStore {
             int msgCount = tIndex[tDiff++];
             while (msgCount > 0) {
                 if (!aByteBufferForRead.hasRemaining()) {
-                    int limit = Math.min(READ_A_BUFFER_SIZE, (int) (endOffset - offset) * KEY_A_BYTE_LENGTH);
-                    aByteBufferForRead.limit(limit);
-                    fillReadABuffer(aByteBufferForRead, offset);
+                    fillReadABuffer(aByteBufferForRead, offset, endOffset);
                 }
                 long a = aByteBufferForRead.getLong();
                 if (a >= aMin && a <= aMax) {
                     if (!bodyByteBufferForRead.hasRemaining()) {
                         int limit = Math.min(READ_BODY_BUFFER_SIZE, (int) (endOffset - offset) * BODY_BYTE_LENGTH);
                         bodyByteBufferForRead.limit(limit);
-                        fillReadBodyBuffer(bodyByteBufferForRead, offset);
+                        fillReadBodyBuffer(bodyByteBufferForRead, offset, endOffset);
                     }
                     byte[] body = new byte[BODY_BYTE_LENGTH];
                     bodyByteBufferForRead.get(body);
@@ -465,9 +463,7 @@ public class NewMessageStoreImpl extends MessageStore {
             int msgCount = tIndex[t];
             while (msgCount > 0) {
                 if (aByteBufferForRead.remaining() == 0) {
-                    int limit = Math.min(READ_A_BUFFER_SIZE, (int) (endOffset - offset) * KEY_A_BYTE_LENGTH);
-                    aByteBufferForRead.limit(limit);
-                    read += fillReadABuffer(aByteBufferForRead, offset);
+                    read += fillReadABuffer(aByteBufferForRead, offset, endOffset);
                 }
                 long a = aByteBufferForRead.getLong();
                 if (a >= aMin && a <= aMax) {
@@ -539,9 +535,7 @@ public class NewMessageStoreImpl extends MessageStore {
 
         for (long offset = startOffset; offset < endOffset; offset++) {
             if (aiByteBufferForRead.remaining() == 0) {
-                int limit = Math.min(READ_AI_BUFFER_SIZE, (int) (endOffset - offset) * KEY_A_BYTE_LENGTH);
-                aiByteBufferForRead.limit(limit);
-                read += fillReadAIBuffer(aiByteBufferForRead, offset);
+                read += fillReadAIBuffer(aiByteBufferForRead, offset, endOffset);
             }
             long a = aiByteBufferForRead.getLong();
             if (a > aMax) {
@@ -652,10 +646,11 @@ public class NewMessageStoreImpl extends MessageStore {
         }
     }
 
-    private int fillReadABuffer(ByteBuffer readABuffer, long offset) {
+    private int fillReadABuffer(ByteBuffer readABuffer, long offset, long endOffset) {
         DataFile dataFile = dataFileList.get((int) (offset / DATA_SEGMENT_SIZE));
         try {
             readABuffer.clear();
+            readABuffer.limit(Math.min(READ_A_BUFFER_SIZE, (int) (endOffset - offset) * KEY_A_BYTE_LENGTH));
             int nBytes = dataFile.aChannel.read(readABuffer, (offset - dataFile.start) * KEY_A_BYTE_LENGTH);
             readABuffer.flip();
             return nBytes;
@@ -664,9 +659,10 @@ public class NewMessageStoreImpl extends MessageStore {
         }
     }
 
-    private int fillReadAIBuffer(ByteBuffer readAIBuffer, long offset) {
+    private int fillReadAIBuffer(ByteBuffer readAIBuffer, long offset, long endOffset) {
         try {
             readAIBuffer.clear();
+            readAIBuffer.limit(Math.min(READ_AI_BUFFER_SIZE, (int) (endOffset - offset) * KEY_A_BYTE_LENGTH));
             int nBytes = indexFile.aiChannel.read(readAIBuffer, offset * KEY_A_BYTE_LENGTH);
             readAIBuffer.flip();
             return nBytes;
@@ -675,10 +671,11 @@ public class NewMessageStoreImpl extends MessageStore {
         }
     }
 
-    private void fillReadBodyBuffer(ByteBuffer readBodyBuffer, long offset) {
+    private void fillReadBodyBuffer(ByteBuffer readBodyBuffer, long offset, long endOffset) {
         DataFile dataFile = dataFileList.get((int) (offset / DATA_SEGMENT_SIZE));
         try {
             readBodyBuffer.clear();
+            readBodyBuffer.limit(Math.min(READ_BODY_BUFFER_SIZE, (int) (endOffset - offset) * BODY_BYTE_LENGTH));
             dataFile.bodyChannel.read(readBodyBuffer, (offset - dataFile.start) * BODY_BYTE_LENGTH);
             readBodyBuffer.flip();
         } catch (IOException e) {

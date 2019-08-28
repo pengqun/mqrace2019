@@ -364,8 +364,8 @@ public class NewMessageStoreImpl extends MessageStore {
                         + ", skip a: " + skipACounter.get()
                         + ", use ratio: " + ((double) usedACounter.get() / readACounter.get())
                         + ", visit ratio: " + ((double) (usedACounter.get() + skipACounter.get()) / readACounter.get()) + "\n"
-                        + "\tread ai: " + readAICounter.get() + ", used ai: " + usedAICounter.get()
-                        + ", skip ai: " + skipAICounter.get() + ", jump ai: " + jump1AICounter.get() + " - " + jump2AICounter.get()
+                        + "\tread ai: " + readAICounter.get() + ", used ai: " + usedAICounter.get() + ", skip ai: " + skipAICounter.get()
+                        + ", jump ai: " + jump1AICounter.get() + " / " + jump2AICounter.get() + " / " + jump3AICounter.get()
                         + ", use ratio: " + ((double) usedAICounter.get() / readAICounter.get()) + "\n"
                         + ", visit ratio: " + ((double) (usedAICounter.get() + skipAICounter.get()) / readAICounter.get()) + "\n"
                         + "\tcover ratio: " + ((double) usedAICounter.get() / (usedAICounter.get() + usedACounter.get()))+ "\n"
@@ -497,6 +497,7 @@ public class NewMessageStoreImpl extends MessageStore {
         int skip = 0;
         int jump1 = 0;
         int jump2 = 0;
+        int jump3 = 0;
 
         long[] metaIndex = indexFile.metaIndexList.get(tMin / A_INDEX_BLOCK_SIZE);
         if (metaIndex[0] > aMax) {
@@ -508,13 +509,16 @@ public class NewMessageStoreImpl extends MessageStore {
             return new SumAndCount(0, 0);
         }
 
-        long startOffset = getOffsetByTDiff(tMin);
-        long endOffset = getOffsetByTDiff(tMax + 1);
+        long fullStartOffset = getOffsetByTDiff(tMin);
+        long fullEndOffset = getOffsetByTDiff(tMax + 1);
+        long startOffset = fullStartOffset;
+        long endOffset = fullEndOffset;
 
+        // binary search for start
+        int index = 0;
         if (metaIndex[0] < aMin) {
             int start = 0;
             int end = metaIndex.length - 2;
-            int index = 0;
             while (start < end) {
                 index = (start + end) / 2;
                 long a = metaIndex[index];
@@ -526,9 +530,29 @@ public class NewMessageStoreImpl extends MessageStore {
             }
             if (index > 0) {
                 startOffset += (index - 1) * A_INDEX_META_FACTOR;
-                jump1 += (index - 1) * A_INDEX_META_FACTOR;
             }
         }
+
+        // binary search for end
+        if (metaIndex[metaIndex.length - 2] > aMax) {
+            int start = index > 0 ? index - 1 : 0;
+            int end = metaIndex.length - 2;
+            while (start < end) {
+                index = (start + end) / 2;
+                long a = metaIndex[index];
+                if (a <= aMax) {
+                    start = index + 1;
+                } else {
+                    end = index;
+                }
+            }
+            if (end < metaIndex.length - 2) {
+                endOffset = fullStartOffset + end * A_INDEX_META_FACTOR;
+            }
+        }
+
+        jump1 = (int) (startOffset - fullStartOffset);
+        jump2 = (int) (fullEndOffset - endOffset);
 
         ByteBuffer aiByteBufferForRead = threadBufferForReadAI.get();
         aiByteBufferForRead.flip();
@@ -539,7 +563,7 @@ public class NewMessageStoreImpl extends MessageStore {
             }
             long a = aiByteBufferForRead.getLong();
             if (a > aMax) {
-                jump2 += (endOffset - offset - 1);
+                jump3 += (endOffset - offset - 1);
                 break;
             }
             if (a >= aMin) {
@@ -556,9 +580,10 @@ public class NewMessageStoreImpl extends MessageStore {
         skipAICounter.addAndGet(skip);
         jump1AICounter.addAndGet(jump1);
         jump2AICounter.addAndGet(jump2);
+        jump3AICounter.addAndGet(jump3);
 
         if (avgId % AVG_SAMPLE_RATE == 0) {
-            logger.info("Fast got " + count + ", skip: " + skip + ", jump: " + jump1 + " - " + jump2
+            logger.info("Fast got " + count + ", skip: " + skip + ", jump: " + jump1 + "/" + jump2 + "/" + jump3
                     + ", time: " + (System.currentTimeMillis() - avgStart) + ", avgId: " + avgId);
         }
         return new SumAndCount(sum, count);
@@ -809,6 +834,7 @@ public class NewMessageStoreImpl extends MessageStore {
     private AtomicInteger skipAICounter  = new AtomicInteger(0);
     private AtomicInteger jump1AICounter  = new AtomicInteger(0);
     private AtomicInteger jump2AICounter  = new AtomicInteger(0);
+    private AtomicInteger jump3AICounter  = new AtomicInteger(0);
     private AtomicInteger normalSmallerCounter = new AtomicInteger(0);
     private AtomicInteger normalLargerCounter = new AtomicInteger(0);
     private AtomicInteger fastSmallerCounter = new AtomicInteger(0);

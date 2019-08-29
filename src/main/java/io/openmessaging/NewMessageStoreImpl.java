@@ -29,8 +29,8 @@ public class NewMessageStoreImpl extends MessageStore {
 
     private static final int T_INDEX_SUMMARY_FACTOR = 32;
 
-    private static final int A_INDEX_BLOCK_SIZE = 5000;
-    private static final int A_INDEX_META_FACTOR = 50;
+    private static final int A_INDEX_BLOCK_SIZE = 1024 * 4;
+    private static final int A_INDEX_META_FACTOR = 32;
 
     private static final int WRITE_STAGE_BUFFER_SIZE = MSG_BYTE_LENGTH * 1024;
     private static final int READ_STAGE_BUFFER_SIZE = MSG_BYTE_LENGTH * 1024 * 8;
@@ -426,7 +426,7 @@ public class NewMessageStoreImpl extends MessageStore {
     }
 
     private SumAndCount getAvgValueNormal(int avgId, long aMin, long aMax, int tMin, int tMax) {
-        long avgStart = System.nanoTime();
+//        long avgStart = System.nanoTime();
         long sum = 0;
         int read = 0;
         int count = 0;
@@ -457,19 +457,19 @@ public class NewMessageStoreImpl extends MessageStore {
         }
         aByteBufferForRead.clear();
 
-        readACounter.addAndGet(read / KEY_A_BYTE_LENGTH);
-        usedACounter.addAndGet(count);
-        skipACounter.addAndGet(skip);
-
-        if (avgId % AVG_SAMPLE_RATE == 0) {
-            logger.info("Normal got " + count + ", skip: " + skip
-                    + ", time: " + (System.nanoTime() - avgStart) + ", avgId: " + avgId);
-        }
+//        readACounter.addAndGet(read / KEY_A_BYTE_LENGTH);
+//        usedACounter.addAndGet(count);
+//        skipACounter.addAndGet(skip);
+//
+//        if (avgId % AVG_SAMPLE_RATE == 0) {
+//            logger.info("Normal got " + count + ", skip: " + skip
+//                    + ", time: " + (System.nanoTime() - avgStart) + ", avgId: " + avgId);
+//        }
         return new SumAndCount(sum, count);
     }
 
     private SumAndCount getAvgValueFast(int avgId, long aMin, long aMax, int tMin, int tMax) {
-        long avgStart = System.nanoTime();
+//        long avgStart = System.nanoTime();
         long sum = 0;
         int read = 0;
         int count = 0;
@@ -525,8 +525,8 @@ public class NewMessageStoreImpl extends MessageStore {
             }
         }
 
-        jump1 = (int) (startOffset - fullStartOffset);
-        jump2 = (int) (fullEndOffset - endOffset);
+//        jump1 = (int) (startOffset - fullStartOffset);
+//        jump2 = (int) (fullEndOffset - endOffset);
 
         ByteBuffer aiByteBufferForRead = threadBufferForReadAI.get();
         aiByteBufferForRead.flip();
@@ -544,23 +544,23 @@ public class NewMessageStoreImpl extends MessageStore {
                 sum += a;
                 count++;
             }
-            else {
-                skip++;
-            }
+//            else {
+//                skip++;
+//            }
         }
         aiByteBufferForRead.clear();
 
-        readAICounter.addAndGet(read / KEY_A_BYTE_LENGTH);
-        usedAICounter.addAndGet(count);
-        skipAICounter.addAndGet(skip);
-        jump1AICounter.addAndGet(jump1);
-        jump2AICounter.addAndGet(jump2);
-        jump3AICounter.addAndGet(jump3);
-
-        if (avgId % AVG_SAMPLE_RATE == 0) {
-            logger.info("Fast got " + count + ", skip: " + skip + ", jump: " + jump1 + "/" + jump2 + "/" + jump3
-                    + ", time: " + (System.nanoTime() - avgStart) + ", avgId: " + avgId);
-        }
+//        readAICounter.addAndGet(read / KEY_A_BYTE_LENGTH);
+//        usedAICounter.addAndGet(count);
+//        skipAICounter.addAndGet(skip);
+//        jump1AICounter.addAndGet(jump1);
+//        jump2AICounter.addAndGet(jump2);
+//        jump3AICounter.addAndGet(jump3);
+//
+//        if (avgId % AVG_SAMPLE_RATE == 0) {
+//            logger.info("Fast got " + count + ", skip: " + skip + ", jump: " + jump1 + "/" + jump2 + "/" + jump3
+//                    + ", time: " + (System.nanoTime() - avgStart) + ", avgId: " + avgId);
+//        }
         return new SumAndCount(sum, count);
     }
 

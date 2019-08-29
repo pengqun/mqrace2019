@@ -30,7 +30,7 @@ public class NewMessageStoreImpl extends MessageStore {
 
     private static final int T_INDEX_SUMMARY_FACTOR = 32;
 
-    private static final int A_INDEX_BLOCK_SIZE = 1024 * 2;
+    private static final int A_INDEX_BLOCK_SIZE = 1024 * 8;
     private static final int A_INDEX_META_FACTOR = 32;
 //    private static final int A_INDEX_BLOCK_SIZE = 1000;
 //    private static final int A_INDEX_META_FACTOR = 10;

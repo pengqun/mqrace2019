@@ -33,16 +33,16 @@ public class NewMessageStoreImpl extends MessageStore {
     private static final int A_INDEX_META_FACTOR = 32;
 
     private static final int WRITE_STAGE_BUFFER_SIZE = MSG_BYTE_LENGTH * 1024;
-    private static final int READ_STAGE_BUFFER_SIZE = MSG_BYTE_LENGTH * 1024 * 8;
+    private static final int READ_STAGE_BUFFER_SIZE = MSG_BYTE_LENGTH * 1024 * 16;
 
     private static final int WRITE_A_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024;
-    private static final int READ_A_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024 * 8;
+    private static final int READ_A_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024 * 16;
 
     private static final int WRITE_AI_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024;
-    private static final int READ_AI_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024 * 8;
+    private static final int READ_AI_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024 * 16;
 
     private static final int WRITE_BODY_BUFFER_SIZE = BODY_BYTE_LENGTH * 1024;
-    private static final int READ_BODY_BUFFER_SIZE = BODY_BYTE_LENGTH * 1024 * 8;
+    private static final int READ_BODY_BUFFER_SIZE = BODY_BYTE_LENGTH * 1024 * 16;
 
     static {
         logger.info("LsmMessageStoreImpl class loaded");
@@ -328,45 +328,45 @@ public class NewMessageStoreImpl extends MessageStore {
 
     @Override
     public long getAvgValue(long aMin, long aMax, long tMin, long tMax) {
-        long avgStart = System.currentTimeMillis();
-        int avgId = avgCounter.getAndIncrement();
-        if (IS_TEST_RUN && avgId == 0) {
-            _getEnd = System.currentTimeMillis();
-            _avgStart = _getEnd;
-        }
-        if (avgId % AVG_SAMPLE_RATE == 0) {
-            logger.info("getAvgValue - tMin: " + tMin + ", tMax: " + tMax
-                    + ", aMin: " + aMin + ", aMax: " + aMax
-                    + ", tRange: " + (tMax - tMin) + ", avgId: " + avgId);
-            if (IS_TEST_RUN && avgId == TEST_BOUNDARY) {
-                long putDuration = _putEnd - _putStart;
-                long getDuration = _getEnd - _getStart;
-                long avgDuration = System.currentTimeMillis() - _avgStart;
-                int putScore = (int) (putCounter.get() / putDuration);
-                int getScore = (int) (getMsgCounter.get() / getDuration);
-                int avgScore = (int) (avgMsgCounter.get() / avgDuration);
-                int totalScore = putScore + getScore + avgScore;
-                logger.info("Avg result: \n"
-                        + "\tread a: " + readACounter.get() + ", used a: " + usedACounter.get()
-                        + ", skip a: " + skipACounter.get()
-                        + ", use ratio: " + ((double) usedACounter.get() / readACounter.get())
-                        + ", visit ratio: " + ((double) (usedACounter.get() + skipACounter.get()) / readACounter.get()) + "\n"
-                        + "\tread ai: " + readAICounter.get() + ", used ai: " + usedAICounter.get() + ", skip ai: " + skipAICounter.get()
-                        + ", jump ai: " + jump1AICounter.get() + " / " + jump2AICounter.get() + " / " + jump3AICounter.get()
-                        + ", use ratio: " + ((double) usedAICounter.get() / readAICounter.get()) + "\n"
-                        + ", visit ratio: " + ((double) (usedAICounter.get() + skipAICounter.get()) / readAICounter.get()) + "\n"
-                        + "\tcover ratio: " + ((double) usedAICounter.get() / (usedAICounter.get() + usedACounter.get()))+ "\n"
-                        + "\tfast smaller: " + fastSmallerCounter.get() + ", larger: " + fastLargerCounter.get() + "\n"
-                );
-                logger.info("Test result: \n"
-                        + "\tput: " + putCounter.get() + " / " + putDuration + "ms = " + putScore + "\n"
-                        + "\tget: " + getMsgCounter.get() + " / " + getDuration + "ms = " + getScore + "\n"
-                        + "\tavg: " + avgMsgCounter.get() + " / " + avgDuration + "ms = " + avgScore + "\n"
-                        + "\ttotal: " + totalScore + "\n"
-                );
-                throw new RuntimeException(putScore + "/" + getScore + "/" + avgScore);
-            }
-        }
+//        long avgStart = System.currentTimeMillis();
+//        int avgId = avgCounter.getAndIncrement();
+//        if (IS_TEST_RUN && avgId == 0) {
+//            _getEnd = System.currentTimeMillis();
+//            _avgStart = _getEnd;
+//        }
+//        if (avgId % AVG_SAMPLE_RATE == 0) {
+//            logger.info("getAvgValue - tMin: " + tMin + ", tMax: " + tMax
+//                    + ", aMin: " + aMin + ", aMax: " + aMax
+//                    + ", tRange: " + (tMax - tMin) + ", avgId: " + avgId);
+//            if (IS_TEST_RUN && avgId == TEST_BOUNDARY) {
+//                long putDuration = _putEnd - _putStart;
+//                long getDuration = _getEnd - _getStart;
+//                long avgDuration = System.currentTimeMillis() - _avgStart;
+//                int putScore = (int) (putCounter.get() / putDuration);
+//                int getScore = (int) (getMsgCounter.get() / getDuration);
+//                int avgScore = (int) (avgMsgCounter.get() / avgDuration);
+//                int totalScore = putScore + getScore + avgScore;
+//                logger.info("Avg result: \n"
+//                        + "\tread a: " + readACounter.get() + ", used a: " + usedACounter.get()
+//                        + ", skip a: " + skipACounter.get()
+//                        + ", use ratio: " + ((double) usedACounter.get() / readACounter.get())
+//                        + ", visit ratio: " + ((double) (usedACounter.get() + skipACounter.get()) / readACounter.get()) + "\n"
+//                        + "\tread ai: " + readAICounter.get() + ", used ai: " + usedAICounter.get() + ", skip ai: " + skipAICounter.get()
+//                        + ", jump ai: " + jump1AICounter.get() + " / " + jump2AICounter.get() + " / " + jump3AICounter.get()
+//                        + ", use ratio: " + ((double) usedAICounter.get() / readAICounter.get()) + "\n"
+//                        + ", visit ratio: " + ((double) (usedAICounter.get() + skipAICounter.get()) / readAICounter.get()) + "\n"
+//                        + "\tcover ratio: " + ((double) usedAICounter.get() / (usedAICounter.get() + usedACounter.get()))+ "\n"
+//                        + "\tfast smaller: " + fastSmallerCounter.get() + ", larger: " + fastLargerCounter.get() + "\n"
+//                );
+//                logger.info("Test result: \n"
+//                        + "\tput: " + putCounter.get() + " / " + putDuration + "ms = " + putScore + "\n"
+//                        + "\tget: " + getMsgCounter.get() + " / " + getDuration + "ms = " + getScore + "\n"
+//                        + "\tavg: " + avgMsgCounter.get() + " / " + avgDuration + "ms = " + avgScore + "\n"
+//                        + "\ttotal: " + totalScore + "\n"
+//                );
+//                throw new RuntimeException(putScore + "/" + getScore + "/" + avgScore);
+//            }
+//        }
 
         long sum = 0;
         int count = 0;
@@ -388,6 +388,7 @@ public class NewMessageStoreImpl extends MessageStore {
 //                    + ", blocks: " + blocks + ", covered: " + blocks * A_INDEX_BLOCK_SIZE
 //                    + ", uncovered: " + (tMaxDiff - tMinDiff - tEnd + tStart) + ", avgId: " + avgId);
 //        }
+        int avgId = 0;
 
         if (tStart >= tEnd) {
             // Back to normal
@@ -416,12 +417,12 @@ public class NewMessageStoreImpl extends MessageStore {
             }
         }
 
-        if (avgId % AVG_SAMPLE_RATE == 0) {
-            logger.info("Got " + count + ", time: " + (System.currentTimeMillis() - avgStart) + ", avgId: " + avgId);
-        }
-        if (IS_TEST_RUN) {
-            avgMsgCounter.addAndGet(count);
-        }
+//        if (avgId % AVG_SAMPLE_RATE == 0) {
+//            logger.info("Got " + count + ", time: " + (System.currentTimeMillis() - avgStart) + ", avgId: " + avgId);
+//        }
+//        if (IS_TEST_RUN) {
+//            avgMsgCounter.addAndGet(count);
+//        }
         return count > 0 ? sum / count : 0;
     }
 

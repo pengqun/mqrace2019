@@ -29,8 +29,8 @@ public class NewMessageStoreImpl extends MessageStore {
 
     private static final int T_INDEX_SUMMARY_FACTOR = 32;
 
-    private static final int A_INDEX_BLOCK_SIZE = 4400;
-    private static final int A_INDEX_META_FACTOR = 22;
+    private static final int A_INDEX_BLOCK_SIZE = 1024 * 4;
+    private static final int A_INDEX_META_FACTOR = 16;
 
     private static final int WRITE_STAGE_BUFFER_SIZE = MSG_BYTE_LENGTH * 1024;
     private static final int READ_STAGE_BUFFER_SIZE = MSG_BYTE_LENGTH * 1024 * 16;

@@ -127,9 +127,9 @@ public class NewMessageStoreImpl extends MessageStore {
             }
         }
 
-//        if (putId == 10000 * 10000) {
-//            throw new RuntimeException("" + (System.currentTimeMillis() - _putStart) + ", " + tIndexCounter);
-//        }
+        if (putId == 20000 * 10000) {
+            throw new RuntimeException("" + (System.currentTimeMillis() - _putStart));
+        }
 
         stageFileList.get(threadId).writeMessage(message);
 

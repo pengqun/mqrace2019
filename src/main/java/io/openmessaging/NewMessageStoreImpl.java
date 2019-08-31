@@ -127,7 +127,7 @@ public class NewMessageStoreImpl extends MessageStore {
             }
         }
 
-        if (putId == 20000 * 10000) {
+        if (putId == 10000 * 10000) {
             throw new RuntimeException("" + (System.currentTimeMillis() - _putStart));
         }
 
@@ -595,7 +595,7 @@ public class NewMessageStoreImpl extends MessageStore {
                 flushBuffer();
             }
             int tDiff = (int) (message.getT() - tBase);
-            byteBufferForWrite.putInt(tDiff);
+//            byteBufferForWrite.putInt(tDiff);
             byteBufferForWrite.putLong(message.getA());
             byteBufferForWrite.put(message.getBody());
         }

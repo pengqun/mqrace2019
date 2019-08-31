@@ -13,6 +13,6 @@ class Constants {
     static final int KEY_A_BYTE_LENGTH = 8;
     static final int TA_BYTE_LENGTH = 16;
     static final int BODY_BYTE_LENGTH = 34;
-    static final int MSG_BYTE_LENGTH = 42;
+    static final int MSG_BYTE_LENGTH = 46;
     static final int MSG_FULL_BYTE_LENGTH = 50;
 }

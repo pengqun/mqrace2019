@@ -68,6 +68,7 @@ public class NewMessageStoreImpl extends MessageStore {
 
     private short[] tIndex;
     private int[] tIndexSummary;
+    private Map<Integer, Integer> tIndexOverflow = new HashMap<>();
     private volatile long tBase = -1;
     private long tMaxValue = Long.MIN_VALUE;
     private volatile boolean rewriteDone = false;
@@ -159,7 +160,7 @@ public class NewMessageStoreImpl extends MessageStore {
         readingFiles.forEach(StageFile::prepareForRead);
 
         while (true) {
-            short writeCount = 0;
+            int writeCount = 0;
             Iterator<StageFile> iterator = readingFiles.iterator();
 
             while (iterator.hasNext()) {
@@ -199,9 +200,14 @@ public class NewMessageStoreImpl extends MessageStore {
                 break;
             }
 
-            //  TODO store overflowed count to additional map
             // update t index
-            tIndex[currentT++] = writeCount;
+            if (writeCount < Short.MAX_VALUE) {
+                tIndex[currentT] = (short) writeCount;
+            } else {
+                tIndex[currentT] = Short.MAX_VALUE;
+                tIndexOverflow.put(currentT, writeCount);
+            }
+            currentT++;
 
             // update t summary
             if (currentT % T_INDEX_SUMMARY_FACTOR == 0) {
@@ -246,7 +252,12 @@ public class NewMessageStoreImpl extends MessageStore {
     private long getOffsetByTDiff(int tDiff) {
         long offset = tIndexSummary[tDiff / T_INDEX_SUMMARY_FACTOR];
         for (int i = tDiff / T_INDEX_SUMMARY_FACTOR * T_INDEX_SUMMARY_FACTOR; i < tDiff; i++) {
-            offset += tIndex[i];
+            int msgCount = tIndex[i];
+            if (msgCount == Short.MAX_VALUE) {
+                offset += tIndexOverflow.get(i);
+            } else {
+                offset += msgCount;
+            }
         }
         return offset;
     }
@@ -413,8 +424,8 @@ public class NewMessageStoreImpl extends MessageStore {
                 count += result.count;
             }
             // Process middle
-            for (int tIndex = tStart; tIndex < tEnd; tIndex += A_INDEX_BLOCK_SIZE) {
-                SumAndCount result = getAvgValueFast(avgId, aMin, aMax, tIndex, tIndex + A_INDEX_BLOCK_SIZE - 1);
+            for (int t = tStart; t < tEnd; t += A_INDEX_BLOCK_SIZE) {
+                SumAndCount result = getAvgValueFast(avgId, aMin, aMax, t, t + A_INDEX_BLOCK_SIZE - 1);
                 sum += result.sum;
                 count += result.count;
             }
@@ -444,6 +455,9 @@ public class NewMessageStoreImpl extends MessageStore {
 
         for (int t = tMin; t <= tMax; t++) {
             int msgCount = tIndex[t];
+            if (msgCount == Short.MAX_VALUE) {
+                msgCount = tIndexOverflow.get(t);
+            }
             while (msgCount > 0) {
                 if (aByteBufferForRead.remaining() == 0) {
                     read += fillReadABuffer(aByteBufferForRead, offset, endOffset);

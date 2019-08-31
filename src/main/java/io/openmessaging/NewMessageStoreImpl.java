@@ -25,7 +25,7 @@ public class NewMessageStoreImpl extends MessageStore {
 
     private static final int MSG_COUNT_UPPER_LIMIT = Integer.MAX_VALUE;
 
-    private static final int DATA_SEGMENT_SIZE = 4 * 1024 * 1024;
+    private static final int DATA_SEGMENT_SIZE = 8 * 1024 * 1024;
 
     private static final int T_INDEX_SUMMARY_FACTOR = 32;
 

@@ -3,51 +3,20 @@ package io.openmessaging;
 
 import org.apache.log4j.Logger;
 
-import java.io.FileNotFoundException;
-import java.io.IOException;
-import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
-import java.nio.channels.FileChannel;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.LockSupport;
 
+import static io.openmessaging.Constants.*;
+import static io.openmessaging.PerfStats.*;
+
 /**
- * @author .ignore 2019-07-29
+ * @author pengqun.pq
  */
 public class DefaultMessageStoreImpl extends MessageStore {
 
     private static final Logger logger = Logger.getLogger(DefaultMessageStoreImpl.class);
-
-    private static final String DATA_DIR = "/alidata1/race2019/data/"; static final int TEST_BOUNDARY = 37000; static final int PRODUCER_THREAD_NUM = 12;
-//    private static final String DATA_DIR = "/tmp/"; static final int TEST_BOUNDARY = 9000; static final int PRODUCER_THREAD_NUM = 10;
-
-    private static final int KEY_A_BYTE_LENGTH = 8;
-    private static final int BODY_BYTE_LENGTH = 34;
-    private static final int MSG_BYTE_LENGTH = 46;
-
-    private static final int MSG_COUNT_UPPER_LIMIT = Integer.MAX_VALUE;
-
-    private static final int DATA_SEGMENT_SIZE = 8 * 1024 * 1024;
-
-    private static final int T_INDEX_SUMMARY_FACTOR = 32;
-
-    private static final int A_INDEX_BLOCK_SIZE = 1024 * 4;
-    private static final int A_INDEX_META_FACTOR = 16;
-
-    private static final int WRITE_STAGE_BUFFER_SIZE = MSG_BYTE_LENGTH * 1024;
-    private static final int READ_STAGE_BUFFER_SIZE = MSG_BYTE_LENGTH * 1024 * 16;
-
-    private static final int WRITE_A_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024;
-    private static final int READ_A1_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024 * 8;
-    private static final int READ_A2_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024 * 16;
-
-    private static final int WRITE_AI_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024;
-    private static final int READ_AI_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024 * 16;
-
-    private static final int WRITE_BODY_BUFFER_SIZE = BODY_BYTE_LENGTH * 1024;
-    private static final int READ_BODY_BUFFER_SIZE = BODY_BYTE_LENGTH * 1024;
 
     static {
         logger.info("LsmMessageStoreImpl class loaded");
@@ -62,13 +31,8 @@ public class DefaultMessageStoreImpl extends MessageStore {
     private long[] threadMinT = new long[PRODUCER_THREAD_NUM];
 
     private List<DataFile> dataFileList = new ArrayList<>();
-    private int dataFileCounter = 0;
 
     private IndexFile indexFile = new IndexFile();
-
-    private ByteBuffer aBufferForWrite = ByteBuffer.allocateDirect(WRITE_A_BUFFER_SIZE);
-    private ByteBuffer aiBufferForWrite = ByteBuffer.allocateDirect(WRITE_AI_BUFFER_SIZE);
-    private ByteBuffer bodyBufferForWrite = ByteBuffer.allocateDirect(WRITE_BODY_BUFFER_SIZE);
 
     private short[] tIndex;
     private int[] tIndexSummary;
@@ -90,31 +54,21 @@ public class DefaultMessageStoreImpl extends MessageStore {
 
     public DefaultMessageStoreImpl() {
         for (int i = 0; i < PRODUCER_THREAD_NUM; i++) {
-            StageFile stageFile = new StageFile();
-            RandomAccessFile raf;
-            try {
-                raf = new RandomAccessFile(DATA_DIR + "stage" + i + ".data", "rw");
-            } catch (FileNotFoundException e) {
-                throw new RuntimeException("no file");
-            }
-            stageFile.fileChannel = raf.getChannel();
-            stageFile.byteBufferForWrite = ByteBuffer.allocateDirect(WRITE_STAGE_BUFFER_SIZE);
-            stageFile.byteBufferForRead = ByteBuffer.allocateDirect(READ_STAGE_BUFFER_SIZE);
-            stageFileList.add(stageFile);
+            stageFileList.add(new StageFile(i));
         }
         Arrays.fill(threadMinT, -1);
     }
 
     @Override
     public void put(Message message) {
-//        long putStart = System.nanoTime();
+        long putStart = System.nanoTime();
         int putId = putCounter.getAndIncrement();
+        int threadId = threadIdHolder.get();
 
         if (tBase < 0) {
-            int threadId = threadIdHolder.get();
             threadMinT[threadId] = message.getT();
             if (putId == 0) {
-                _putStart = System.currentTimeMillis();
+                PerfStats._putStart = System.currentTimeMillis();
                 long min = Long.MAX_VALUE;
                 for (int i = 0; i < threadMinT.length; i++) {
                     while (threadMinT[i] < 0) {
@@ -131,17 +85,18 @@ public class DefaultMessageStoreImpl extends MessageStore {
             }
         }
 
-        if (putId == 20000 * 10000) {
-            throw new RuntimeException("" + (System.currentTimeMillis() - _putStart));
-        }
-
-//        stageFileList.get(threadId).writeMessage(message);
-
-//        if (putId % PUT_SAMPLE_RATE == 0) {
-//            logger.info("Write message to stage file with t: " + message.getT() + ", a: " + message.getA()
-//                    + ", time: " + (System.nanoTime() - putStart) + ", putId: " + putId
-//            );
+//        if (putId == 20000 * 10000) {
+//            throw new RuntimeException("" + (System.currentTimeMillis() - PerfStats._putStart));
 //        }
+
+        message.setT(message.getT() - tBase);
+        stageFileList.get(threadId).writeMessage(message);
+
+        if (putId % PUT_SAMPLE_RATE == 0) {
+            logger.info("Write message to stage file with t: " + message.getT() + ", a: " + message.getA()
+                    + ", time: " + (System.nanoTime() - putStart) + ", putId: " + putId
+            );
+        }
     }
 
     private void rewriteFiles() {
@@ -152,7 +107,7 @@ public class DefaultMessageStoreImpl extends MessageStore {
         DataFile curDataFile = null;
         List<Long> aBuffer = new ArrayList<>(A_INDEX_BLOCK_SIZE);
 
-        tMaxValue = stageFileList.stream().map(StageFile::getLastT)
+        tMaxValue = stageFileList.stream().map(StageFile::getLastT).map(t -> t + tBase)
                 .max(Comparator.comparingLong(t -> t)).orElse(0L);
         logger.info("Determined t max value: " + tMaxValue);
 
@@ -169,7 +124,7 @@ public class DefaultMessageStoreImpl extends MessageStore {
 
             while (iterator.hasNext()) {
                 StageFile stageFile = iterator.next();
-                if (stageFile.doneRead) {
+                if (stageFile.isDoneRead()) {
                     iterator.remove();
                 }
                 Message head;
@@ -181,7 +136,7 @@ public class DefaultMessageStoreImpl extends MessageStore {
                             curDataFile.flushABuffer();
                             curDataFile.flushBodyBuffer();
                         }
-                        curDataFile = new DataFile(putCounter, putCounter + DATA_SEGMENT_SIZE - 1);
+                        curDataFile = new DataFile(putCounter);
                         dataFileList.add(curDataFile);
                     }
                     curDataFile.writeA(message.getA());
@@ -238,7 +193,7 @@ public class DefaultMessageStoreImpl extends MessageStore {
                 }
                 // Store max a in last element
                 metaIndex[metaIndex.length - 1] = aBuffer.get(size - 1);
-                indexFile.metaIndexList.add(metaIndex);
+                indexFile.getMetaIndexList().add(metaIndex);
                 aBuffer.clear();
             }
         }
@@ -249,21 +204,8 @@ public class DefaultMessageStoreImpl extends MessageStore {
         }
         indexFile.flushABuffer();
         logger.info("Done rewrite files, msg count1: " + putCounter
-                + ", index list size: " + indexFile.metaIndexList.size()
+                + ", index list size: " + indexFile.getMetaIndexList().size()
                 + ", discard ai: " + aBuffer.size());
-    }
-
-    private long getOffsetByTDiff(int tDiff) {
-        long offset = tIndexSummary[tDiff / T_INDEX_SUMMARY_FACTOR];
-        for (int i = tDiff / T_INDEX_SUMMARY_FACTOR * T_INDEX_SUMMARY_FACTOR; i < tDiff; i++) {
-            int msgCount = tIndex[i];
-            if (msgCount == Short.MAX_VALUE) {
-                offset += tIndexOverflow.get(i);
-            } else {
-                offset += msgCount;
-            }
-        }
-        return offset;
     }
 
     @Override
@@ -271,9 +213,9 @@ public class DefaultMessageStoreImpl extends MessageStore {
         long getStart = System.currentTimeMillis();
         int getId = getCounter.getAndIncrement();
         if (getId == 0) {
-            _putEnd = System.currentTimeMillis();
-            _getStart = _putEnd;
-            printStats();
+            PerfStats._putEnd = System.currentTimeMillis();
+            PerfStats._getStart = PerfStats._putEnd;
+//            PerfStats.printStats(this);
         }
         if (getId % GET_SAMPLE_RATE == 0) {
             logger.info("getMessage - tMin: " + tMin + ", tMax: " + tMax
@@ -312,12 +254,14 @@ public class DefaultMessageStoreImpl extends MessageStore {
             int msgCount = tIndex[tDiff++];
             while (msgCount > 0) {
                 if (!aByteBufferForRead.hasRemaining()) {
-                    fillReadABuffer(aByteBufferForRead, offset, endOffset);
+                    DataFile dataFile = dataFileList.get((int) (offset / DATA_SEGMENT_SIZE));
+                    dataFile.fillReadABuffer(aByteBufferForRead, offset, endOffset);
                 }
                 long a = aByteBufferForRead.getLong();
                 if (a >= aMin && a <= aMax) {
                     if (!bodyByteBufferForRead.hasRemaining()) {
-                        fillReadBodyBuffer(bodyByteBufferForRead, offset, endOffset);
+                        DataFile dataFile = dataFileList.get((int) (offset / DATA_SEGMENT_SIZE));
+                        dataFile.fillReadBodyBuffer(bodyByteBufferForRead, offset, endOffset);
                     }
                     byte[] body = new byte[BODY_BYTE_LENGTH];
                     bodyByteBufferForRead.get(body);
@@ -349,15 +293,15 @@ public class DefaultMessageStoreImpl extends MessageStore {
         long avgStart = System.currentTimeMillis();
         int avgId = avgCounter.getAndIncrement();
         if (avgId == 0) {
-            _getEnd = System.currentTimeMillis();
-            _avgStart = _getEnd;
+            PerfStats._getEnd = System.currentTimeMillis();
+            PerfStats._avgStart = PerfStats._getEnd;
         }
         if (avgId % AVG_SAMPLE_RATE == 0) {
             logger.info("getAvgValue - tMin: " + tMin + ", tMax: " + tMax + ", aMin: " + aMin + ", aMax: " + aMax
                     + ", tRange: " + (tMax - tMin) + ", avgId: " + avgId);
         }
         if (avgId == TEST_BOUNDARY) {
-            printStats();
+            PerfStats.printStats(this);
         }
 
         long sum = 0;
@@ -385,27 +329,27 @@ public class DefaultMessageStoreImpl extends MessageStore {
         if (tStart >= tEnd) {
             // Back to normal
             SumAndCount result = getAvgValueNormal(avgId, aMin, aMax, tMinDiff, tMaxDiff);
-            sum += result.sum;
-            count += result.count;
+            sum += result.getSum();
+            count += result.getCount();
 
         } else {
             // Process head
             if (tMinDiff != tStart) {
                 SumAndCount result = getAvgValueNormal(avgId, aMin, aMax, tMinDiff, tStart - 1);
-                sum += result.sum;
-                count += result.count;
+                sum += result.getSum();
+                count += result.getCount();
             }
             // Process tail
             if (tMaxDiff > tEnd - 1) {
                 SumAndCount result = getAvgValueNormal(avgId, aMin, aMax, tEnd, tMaxDiff);
-                sum += result.sum;
-                count += result.count;
+                sum += result.getSum();
+                count += result.getCount();
             }
             // Process middle
             for (int t = tStart; t < tEnd; t += A_INDEX_BLOCK_SIZE) {
                 SumAndCount result = getAvgValueFast(avgId, aMin, aMax, t, t + A_INDEX_BLOCK_SIZE - 1);
-                sum += result.sum;
-                count += result.count;
+                sum += result.getSum();
+                count += result.getCount();
             }
         }
 
@@ -437,7 +381,8 @@ public class DefaultMessageStoreImpl extends MessageStore {
             }
             while (msgCount > 0) {
                 if (aByteBufferForRead.remaining() == 0) {
-                    read += fillReadABuffer(aByteBufferForRead, offset, endOffset);
+                    DataFile dataFile = dataFileList.get((int) (offset / DATA_SEGMENT_SIZE));
+                    read += dataFile.fillReadABuffer(aByteBufferForRead, offset, endOffset);
                 }
                 long a = aByteBufferForRead.getLong();
                 if (a >= aMin && a <= aMax) {
@@ -473,7 +418,7 @@ public class DefaultMessageStoreImpl extends MessageStore {
         int jump2 = 0;
         int jump3 = 0;
 
-        long[] metaIndex = indexFile.metaIndexList.get(tMin / A_INDEX_BLOCK_SIZE);
+        long[] metaIndex = indexFile.getMetaIndexList().get(tMin / A_INDEX_BLOCK_SIZE);
         if (metaIndex[0] > aMax) {
             fastSmallerCounter.addAndGet(A_INDEX_BLOCK_SIZE);
             return new SumAndCount(0, 0);
@@ -528,7 +473,7 @@ public class DefaultMessageStoreImpl extends MessageStore {
 
         for (long offset = startOffset; offset < endOffset; offset++) {
             if (aiByteBufferForRead.remaining() == 0) {
-                read += fillReadAIBuffer(aiByteBufferForRead, offset, endOffset);
+                read += indexFile.fillReadAIBuffer(aiByteBufferForRead, offset, endOffset);
             }
             long a = aiByteBufferForRead.getLong();
             if (a > aMax) {
@@ -559,292 +504,20 @@ public class DefaultMessageStoreImpl extends MessageStore {
         return new SumAndCount(sum, count);
     }
 
-    private class StageFile {
-        FileChannel fileChannel;
-        ByteBuffer byteBufferForWrite;
-        ByteBuffer byteBufferForRead;
-        long fileOffset;
-        Message peeked;
-        boolean doneRead;
-
-        void writeMessage(Message message) {
-            if (!byteBufferForWrite.hasRemaining()) {
-                flushBuffer();
-            }
-            int tDiff = (int) (message.getT() - tBase);
-            byteBufferForWrite.putInt(tDiff);
-            byteBufferForWrite.putLong(message.getA());
-            byteBufferForWrite.put(message.getBody());
-        }
-
-        void flushBuffer() {
-            byteBufferForWrite.flip();
-            try {
-                fileChannel.write(byteBufferForWrite);
-            } catch (IOException e) {
-                throw new RuntimeException("write error");
-            }
-            byteBufferForWrite.clear();
-        }
-
-        long getLastT() {
-            ByteBuffer byteBuffer = ByteBuffer.allocate(MSG_BYTE_LENGTH);
-            try {
-                fileChannel.read(byteBuffer, fileChannel.size() - MSG_BYTE_LENGTH);
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
-            byteBuffer.flip();
-            return byteBuffer.getInt() + tBase;
-        }
-
-        long fileSize() {
-            try {
-                return fileChannel.size();
-            } catch (IOException e) {
-                throw new RuntimeException("size error");
+    private long getOffsetByTDiff(int tDiff) {
+        long offset = tIndexSummary[tDiff / T_INDEX_SUMMARY_FACTOR];
+        for (int i = tDiff / T_INDEX_SUMMARY_FACTOR * T_INDEX_SUMMARY_FACTOR; i < tDiff; i++) {
+            int msgCount = tIndex[i];
+            if (msgCount == Short.MAX_VALUE) {
+                offset += tIndexOverflow.get(i);
+            } else {
+                offset += msgCount;
             }
         }
-
-        void prepareForRead() {
-            byteBufferForRead.flip();
-        }
-
-        Message peekMessage() {
-            if (peeked != null) {
-                return peeked;
-            }
-            if (!byteBufferForRead.hasRemaining()) {
-                if (!fillReadBuffer()) {
-                    return null;
-                }
-            }
-            int t = byteBufferForRead.getInt();
-            long a = byteBufferForRead.getLong();
-            byte[] body = new byte[BODY_BYTE_LENGTH];
-            byteBufferForRead.get(body);
-
-            peeked = new Message(a, t, body);
-            return peeked;
-        }
-
-        Message consumePeeked() {
-            Message consumed = peeked;
-            peeked = null;
-            return consumed;
-        }
-
-        boolean fillReadBuffer() {
-            byteBufferForRead.clear();
-            int readBytes;
-            try {
-                readBytes = fileChannel.read(byteBufferForRead, fileOffset);
-            } catch (IOException e) {
-                throw new RuntimeException("read error");
-            }
-            if (readBytes <= 0) {
-                doneRead = true;
-                return false;
-            }
-            fileOffset += readBytes;
-            byteBufferForRead.flip();
-            return true;
-        }
+        return offset;
     }
 
-    private int fillReadABuffer(ByteBuffer readABuffer, long offset, long endOffset) {
-        DataFile dataFile = dataFileList.get((int) (offset / DATA_SEGMENT_SIZE));
-        return fillReadBuffer(readABuffer, dataFile.aChannel, offset - dataFile.start,
-                endOffset - dataFile.start, KEY_A_BYTE_LENGTH);
-    }
-
-    private int fillReadAIBuffer(ByteBuffer readAIBuffer, long offset, long endOffset) {
-        return fillReadBuffer(readAIBuffer, indexFile.aiChannel, offset, endOffset, KEY_A_BYTE_LENGTH);
-    }
-
-    private void fillReadBodyBuffer(ByteBuffer readBodyBuffer, long offset, long endOffset) {
-        DataFile dataFile = dataFileList.get((int) (offset / DATA_SEGMENT_SIZE));
-        fillReadBuffer(readBodyBuffer, dataFile.bodyChannel, offset - dataFile.start,
-                endOffset - dataFile.start, BODY_BYTE_LENGTH);
-    }
-
-    private int fillReadBuffer(ByteBuffer readBuffer, FileChannel fileChannel,
-                                long offset, long endOffset, int elemSize) {
-        try {
-            readBuffer.clear();
-            if ((endOffset - offset) * elemSize < readBuffer.capacity()) {
-                readBuffer.limit((int) (endOffset - offset) * elemSize);
-            }
-            int readBytes = fileChannel.read(readBuffer, offset * elemSize);
-            readBuffer.flip();
-            return readBytes;
-        } catch (IOException e) {
-            throw new RuntimeException("read error");
-        }
-    }
-
-    private void writeLong(long value, ByteBuffer byteBuffer, FileChannel fileChannel) {
-        if (!byteBuffer.hasRemaining()) {
-            flushBuffer(byteBuffer, fileChannel);
-        }
-        byteBuffer.putLong(value);
-    }
-
-    private void writeBytes(byte[] bytes, ByteBuffer byteBuffer, FileChannel fileChannel) {
-        if (!byteBuffer.hasRemaining()) {
-            flushBuffer(byteBuffer, fileChannel);
-        }
-        byteBuffer.put(bytes);
-    }
-
-    private void flushBuffer(ByteBuffer byteBuffer, FileChannel fileChannel) {
-        byteBuffer.flip();
-        try {
-            fileChannel.write(byteBuffer);
-        } catch (IOException e) {
-            throw new RuntimeException("write error");
-        }
-        byteBuffer.clear();
-    }
-
-    private class DataFile {
-        int index;
-        int start;
-        int end;
-        RandomAccessFile aFile;
-        RandomAccessFile asFile;
-        RandomAccessFile bodyFile;
-        FileChannel aChannel;
-        FileChannel asChannel;
-        FileChannel bodyChannel;
-
-        DataFile(int start, int end) {
-            this.start = start;
-            this.end = end;
-            if (this.end < 0) {
-                this.end = MSG_COUNT_UPPER_LIMIT;
-            }
-            this.index = dataFileCounter++;
-            try {
-                this.aFile = new RandomAccessFile(
-                        DATA_DIR + "a" + this.index + ".data", "rw");
-                this.asFile = new RandomAccessFile(
-                        DATA_DIR + "as" + this.index + ".data", "rw");
-                this.bodyFile = new RandomAccessFile(
-                        DATA_DIR + "body" + this.index + ".data", "rw");
-            } catch (FileNotFoundException e) {
-                throw new RuntimeException("file error");
-            }
-            this.aChannel = this.aFile.getChannel();
-            this.asChannel = this.asFile.getChannel();
-            this.bodyChannel = this.bodyFile.getChannel();
-//            logger.info("Created data file: [" + start + ", " + end + "]");
-        }
-
-        void writeA(long a) {
-            writeLong(a, aBufferForWrite, aChannel);
-        }
-
-        void writeBody(byte[] body) {
-            writeBytes(body, bodyBufferForWrite, bodyChannel);
-        }
-
-        void flushABuffer() {
-            flushBuffer(aBufferForWrite, aChannel);
-        }
-
-        void flushBodyBuffer() {
-            flushBuffer(bodyBufferForWrite, bodyChannel);
-        }
-    }
-
-    private class IndexFile {
-        RandomAccessFile aiFile;
-        FileChannel aiChannel;
-        List<long[]> metaIndexList;
-
-        IndexFile() {
-            try {
-                this.aiFile = new RandomAccessFile(
-                        DATA_DIR + "ai.data", "rw");
-            } catch (FileNotFoundException e) {
-                throw new RuntimeException("file error");
-            }
-            this.aiChannel = this.aiFile.getChannel();
-            metaIndexList = new ArrayList<>(1024 * 1024);
-        }
-
-        void writeA(long a) {
-            writeLong(a, aiBufferForWrite, aiChannel);
-        }
-
-        void flushABuffer() {
-            flushBuffer(aiBufferForWrite, aiChannel);
-        }
-    }
-
-    private static class SumAndCount {
-        long sum;
-        long count;
-
-        SumAndCount(long sum, long count) {
-            this.sum = sum;
-            this.count = count;
-        }
-    }
-
-    private static final int PUT_SAMPLE_RATE = 100000000;
-    private static final int REWRITE_SAMPLE_RATE = 100000000;
-    private static final int GET_SAMPLE_RATE = 1000;
-    private static final int AVG_SAMPLE_RATE = 1000;
-
-    private AtomicLong getMsgCounter = new AtomicLong();
-    private AtomicLong avgMsgCounter = new AtomicLong();
-
-    private AtomicInteger readACounter  = new AtomicInteger();
-    private AtomicInteger usedACounter  = new AtomicInteger();
-    private AtomicInteger skipACounter = new AtomicInteger();
-    private AtomicInteger readAICounter  = new AtomicInteger();
-    private AtomicInteger usedAICounter  = new AtomicInteger();
-    private AtomicInteger skipAICounter  = new AtomicInteger();
-    private AtomicInteger jump1AICounter  = new AtomicInteger();
-    private AtomicInteger jump2AICounter  = new AtomicInteger();
-    private AtomicInteger jump3AICounter  = new AtomicInteger();
-    private AtomicInteger fastSmallerCounter = new AtomicInteger();
-    private AtomicInteger fastLargerCounter = new AtomicInteger();
-
-    private long _putStart = 0;
-    private long _putEnd = 0;
-    private long _getStart = 0;
-    private long _getEnd = 0;
-    private long _avgStart = 0;
-
-    private void printStats() {
-        long putDuration = _putEnd - _putStart;
-        long getDuration = _getEnd - _getStart;
-        long avgDuration = System.currentTimeMillis() - _avgStart;
-        int putScore = (int) (putCounter.get() / putDuration);
-        int getScore = (int) (getMsgCounter.get() / getDuration);
-        int avgScore = (int) (avgMsgCounter.get() / avgDuration);
-        int totalScore = putScore + getScore + avgScore;
-        logger.info("Avg result: \n"
-                + "\tread a: " + readACounter.get() + ", used a: " + usedACounter.get()
-                + ", skip a: " + skipACounter.get()
-                + ", use ratio: " + ((double) usedACounter.get() / readACounter.get())
-                + ", visit ratio: " + ((double) (usedACounter.get() + skipACounter.get()) / readACounter.get()) + "\n"
-                + "\tread ai: " + readAICounter.get() + ", used ai: " + usedAICounter.get() + ", skip ai: " + skipAICounter.get()
-                + ", jump ai: " + jump1AICounter.get() + " / " + jump2AICounter.get() + " / " + jump3AICounter.get()
-                + ", use ratio: " + ((double) usedAICounter.get() / readAICounter.get()) + "\n"
-                + ", visit ratio: " + ((double) (usedAICounter.get() + skipAICounter.get()) / readAICounter.get()) + "\n"
-                + "\tcover ratio: " + ((double) usedAICounter.get() / (usedAICounter.get() + usedACounter.get()))+ "\n"
-                + "\tfast smaller: " + fastSmallerCounter.get() + ", larger: " + fastLargerCounter.get() + "\n"
-        );
-        logger.info("Test result: \n"
-                + "\tput: " + putCounter.get() + " / " + putDuration + "ms = " + putScore + "\n"
-                + "\tget: " + getMsgCounter.get() + " / " + getDuration + "ms = " + getScore + "\n"
-                + "\tavg: " + avgMsgCounter.get() + " / " + avgDuration + "ms = " + avgScore + "\n"
-                + "\ttotal: " + totalScore + "\n"
-        );
-        throw new RuntimeException(putScore + "/" + getScore + "/" + avgScore);
+    AtomicInteger getPutCounter() {
+        return putCounter;
     }
 }

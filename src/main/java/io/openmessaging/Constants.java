@@ -4,6 +4,7 @@ package io.openmessaging;
  * @author pengqun.pq
  */
 class Constants {
+
     static final String DATA_DIR = "/alidata1/race2019/data/"; static final int TEST_BOUNDARY = 37000; static final int PRODUCER_THREAD_NUM = 12;
 //    static final String DATA_DIR = "/tmp/"; static final int TEST_BOUNDARY = 9000; static final int PRODUCER_THREAD_NUM = 10;
 

@@ -5,6 +5,9 @@ import org.apache.log4j.Logger;
 
 import java.nio.ByteBuffer;
 import java.util.*;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
@@ -53,6 +56,8 @@ public class DefaultMessageStoreImpl extends MessageStore {
     private ThreadLocal<ByteBuffer> threadBufferForReadAI = createDirectBuffer(READ_AI_BUFFER_SIZE);
     private ThreadLocal<ByteBuffer> threadBufferForReadBody = createDirectBuffer(READ_BODY_BUFFER_SIZE);
 
+    private ThreadPoolExecutor aiIndexWriter = (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
+
     public DefaultMessageStoreImpl() {
         Arrays.fill(threadMinT, -1);
     }
@@ -60,10 +65,10 @@ public class DefaultMessageStoreImpl extends MessageStore {
     @Override
     public void put(Message message) {
 //        long putStart = System.nanoTime();
+        int putId = putCounter.getAndIncrement();
 
         if (tBase < 0) {
             threadMinT[threadIdHolder.get()] = message.getT();
-            int putId = putCounter.getAndIncrement();
             if (putId == 0) {
                 PerfStats._putStart = System.currentTimeMillis();
                 long min = Long.MAX_VALUE;
@@ -100,6 +105,7 @@ public class DefaultMessageStoreImpl extends MessageStore {
         int putCounter = 0;
         int currentT = 0;
         List<Long> aBuffer = new ArrayList<>(A_INDEX_BLOCK_SIZE);
+        AtomicInteger pending = new AtomicInteger();
 
         tMaxValue = stageFileList.stream().map(StageFile::getLastT)
                 .max(Comparator.comparingLong(t -> t)).orElse(0L);
@@ -161,30 +167,41 @@ public class DefaultMessageStoreImpl extends MessageStore {
 
             // sort and store into a index block
             if (currentT % A_INDEX_BLOCK_SIZE == 0) {
-                int size = aBuffer.size();
-                if (size > 1) {
-                    Collections.sort(aBuffer);
-                }
-                long[] metaIndex = new long[(size - 1) / A_INDEX_META_FACTOR + 1 + 1];
-                for (int i = 0; i < size; i++) {
-                    long a = aBuffer.get(i);
-                    indexFile.writeA(a);
-                    if (i % A_INDEX_META_FACTOR == 0) {
-                        metaIndex[i / A_INDEX_META_FACTOR] = a;
+                List<Long> finalABuffer = aBuffer;
+                pending.incrementAndGet();
+                aiIndexWriter.execute(() -> {
+                    int size = finalABuffer.size();
+                    if (size > 1) {
+                        Collections.sort(finalABuffer);
                     }
-                }
-                // Store max a in last element
-                metaIndex[metaIndex.length - 1] = aBuffer.get(size - 1);
-                indexFile.getMetaIndexList().add(metaIndex);
-                aBuffer.clear();
+                    long[] metaIndex = new long[(size - 1) / A_INDEX_META_FACTOR + 1 + 1];
+                    for (int i = 0; i < size; i++) {
+                        long a = finalABuffer.get(i);
+                        indexFile.writeA(a);
+                        if (i % A_INDEX_META_FACTOR == 0) {
+                            metaIndex[i / A_INDEX_META_FACTOR] = a;
+                        }
+                    }
+                    // Store max a in last element
+                    metaIndex[metaIndex.length - 1] = finalABuffer.get(size - 1);
+                    indexFile.getMetaIndexList().add(metaIndex);
+                    pending.decrementAndGet();
+                });
+                aBuffer = new ArrayList<>(A_INDEX_BLOCK_SIZE);
             }
         }
 
         dataFile.flushABuffer();
         dataFile.flushBodyBuffer();
-        indexFile.flushABuffer();
 
-        logger.info("Done rewrite files, msg count1: " + putCounter
+        while (pending.get() > 0) {
+            logger.info("Waiting for index file writing done");
+            LockSupport.parkNanos(100_000_000);
+        }
+        indexFile.flushABuffer();
+        aiIndexWriter.shutdown();
+
+        logger.info("Done rewrite files, msg count: " + putCounter
                 + ", index list size: " + indexFile.getMetaIndexList().size()
                 + ", discard ai: " + aBuffer.size());
     }

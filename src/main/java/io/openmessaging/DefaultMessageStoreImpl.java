@@ -82,16 +82,15 @@ public class DefaultMessageStoreImpl extends MessageStore {
             }
         }
 
-        if (putId == 20000 * 10000) {
-            throw new RuntimeException("" + (System.currentTimeMillis() - PerfStats._putStart));
-        }
+//        if (putId == 20000 * 10000) {
+//            throw new RuntimeException("" + (System.currentTimeMillis() - PerfStats._putStart));
+//        }
 
         threadStageFile.get().writeMessage(message);
 
         if (putId % PUT_SAMPLE_RATE == 0) {
             logger.info("Write message to stage file with t: " + message.getT() + ", a: " + message.getA()
-                    + ", time: " + (System.nanoTime() - putStart) + ", putId: " + putId
-            );
+                    + ", time: " + (System.nanoTime() - putStart) + ", putId: " + putId);
         }
     }
 
@@ -131,12 +130,12 @@ public class DefaultMessageStoreImpl extends MessageStore {
 
                     aBuffer.add(message.getA());
 
-                    if (putCounter % REWRITE_SAMPLE_RATE == 0) {
-                        logger.info("Write message to data file: " + putCounter);
-                    }
-                    if (putCounter == 200_000_000) {
-                        throw new RuntimeException("" + (System.currentTimeMillis() - rewriteStart) + ", " + putCounter);
-                    }
+//                    if (putCounter % REWRITE_SAMPLE_RATE == 0) {
+//                        logger.info("Write message to data file: " + putCounter);
+//                    }
+//                    if (putCounter == 200_000_000) {
+//                        throw new RuntimeException("" + (System.currentTimeMillis() - rewriteStart) + ", " + putCounter);
+//                    }
                     putCounter++;
                     writeCount++;
                 }
@@ -184,6 +183,7 @@ public class DefaultMessageStoreImpl extends MessageStore {
         dataFile.flushABuffer();
         dataFile.flushBodyBuffer();
         indexFile.flushABuffer();
+
         logger.info("Done rewrite files, msg count1: " + putCounter
                 + ", index list size: " + indexFile.getMetaIndexList().size()
                 + ", discard ai: " + aBuffer.size());

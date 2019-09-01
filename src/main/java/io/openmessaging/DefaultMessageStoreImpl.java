@@ -32,7 +32,6 @@ public class DefaultMessageStoreImpl extends MessageStore {
     private AtomicInteger threadIdCounter = new AtomicInteger();
     private ThreadLocal<Integer> threadIdHolder = ThreadLocal.withInitial(() -> threadIdCounter.getAndIncrement());
     private long[] threadMinT = new long[PRODUCER_THREAD_NUM];
-    private long[] threadMaxT = new long[PRODUCER_THREAD_NUM];
 
     private short[] tIndex;
     private int[] tIndexSummary;
@@ -40,7 +39,6 @@ public class DefaultMessageStoreImpl extends MessageStore {
     private volatile long tBase = -1;
     private long tMaxValue = Long.MIN_VALUE;
     private volatile boolean rewriteDone = false;
-    private volatile boolean rewriting = false;
 
     private StageFile[] stageFileList = new StageFile[PRODUCER_THREAD_NUM];
     private DataFile dataFile = new DataFile();
@@ -61,7 +59,6 @@ public class DefaultMessageStoreImpl extends MessageStore {
             stageFileList[i] = stageFile;
         }
         Arrays.fill(threadMinT, -1);
-        Arrays.fill(threadMaxT, -1);
     }
 
     @Override
@@ -96,8 +93,6 @@ public class DefaultMessageStoreImpl extends MessageStore {
 
         stageFileList[threadId].writeMessage(message);
 
-        threadMaxT[threadId] = message.getT();
-
 //        if (putId % PUT_SAMPLE_RATE == 0) {
 //            logger.info("Write message to stage file with t: " + message.getT() + ", a: " + message.getA()
 //                    + ", time: " + (System.nanoTime() - putStart) + ", putId: " + putId);
@@ -112,7 +107,7 @@ public class DefaultMessageStoreImpl extends MessageStore {
         List<Long> aBuffer = new ArrayList<>(A_INDEX_BLOCK_SIZE);
         List<Long> asBuffer = new ArrayList<>(A_INDEX_SUB_BLOCK_SIZE);
 
-        tMaxValue = Arrays.stream(threadMaxT).max().orElse(tMaxValue);
+        tMaxValue = Arrays.stream(stageFileList).mapToLong(StageFile::getLastT).max().orElse(0);
         logger.info("Determined t max value: " + tMaxValue);
 
         tIndex = new short[(int) (tMaxValue - tBase + 1)];
@@ -256,21 +251,18 @@ public class DefaultMessageStoreImpl extends MessageStore {
         if (!rewriteDone) {
             synchronized (this) {
                 if (!rewriteDone) {
-                    if (!rewriting) {
-                        long totalSize = 0;
-                        for (StageFile stageFile : stageFileList) {
-                            stageFile.flushBuffer();
-                            totalSize += stageFile.fileSize();
-                            logger.info("overflow size: " + stageFile.overflowSize());
-                        }
-                        logger.info("Flushed all stage files, total size: " + totalSize);
-                        rewriting = true;
-                        try {
-                            rewriteFiles();
-                        } catch (Throwable e) {
-                            logger.info("Failed to rewrite files: " + e.getClass().getSimpleName() + " - " + e.getMessage());
-                            throw e;
-                        }
+                    long totalSize = 0;
+                    for (StageFile stageFile : stageFileList) {
+                        stageFile.flushBuffer();
+                        totalSize += stageFile.fileSize();
+                        logger.info("overflow size: " + stageFile.overflowSize());
+                    }
+                    logger.info("Flushed all stage files, total size: " + totalSize);
+                    try {
+                        rewriteFiles();
+                    } catch (Throwable e) {
+                        logger.info("Failed to rewrite files: " + e.getClass().getSimpleName() + " - " + e.getMessage());
+                        throw e;
                     }
                     rewriteDone = true;
                 }

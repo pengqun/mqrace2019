@@ -47,4 +47,8 @@ class CommonUtils {
             throw new RuntimeException("read error");
         }
     }
+
+    static ThreadLocal<ByteBuffer> createBuffer(int size) {
+        return ThreadLocal.withInitial(() -> ByteBuffer.allocateDirect(size));
+    }
 }

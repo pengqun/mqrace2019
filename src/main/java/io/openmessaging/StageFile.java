@@ -15,11 +15,12 @@ class StageFile {
     private FileChannel fileChannel;
     private ByteBuffer byteBufferForWrite;
     private ByteBuffer byteBufferForRead;
+    private long tBase;
     private long fileOffset;
     private Message peeked;
     private boolean doneRead;
 
-    StageFile(int index) {
+    StageFile(int index, long tBase) {
         RandomAccessFile raf;
         try {
             raf = new RandomAccessFile(DATA_DIR + "stage" + index + ".data", "rw");
@@ -29,13 +30,14 @@ class StageFile {
         fileChannel = raf.getChannel();
         byteBufferForWrite = ByteBuffer.allocateDirect(WRITE_STAGE_BUFFER_SIZE);
         byteBufferForRead = ByteBuffer.allocateDirect(READ_STAGE_BUFFER_SIZE);
+        this.tBase = tBase;
     }
 
     void writeMessage(Message message) {
         if (!byteBufferForWrite.hasRemaining()) {
             flushBuffer();
         }
-        byteBufferForWrite.putInt((int) message.getT());
+        byteBufferForWrite.putInt((int) (message.getT() - tBase));
         byteBufferForWrite.putLong(message.getA());
         byteBufferForWrite.put(message.getBody());
     }
@@ -58,7 +60,7 @@ class StageFile {
             e.printStackTrace();
         }
         byteBuffer.flip();
-        return byteBuffer.getInt();
+        return byteBuffer.getInt() + tBase;
     }
 
     long fileSize() {

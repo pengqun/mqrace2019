@@ -8,6 +8,7 @@ import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
+import static io.openmessaging.CommonUtils.createBuffer;
 import static io.openmessaging.Constants.*;
 import static io.openmessaging.PerfStats.*;
 
@@ -30,10 +31,6 @@ public class DefaultMessageStoreImpl extends MessageStore {
     private ThreadLocal<Integer> threadIdHolder = ThreadLocal.withInitial(() -> threadIdCounter.getAndIncrement());
     private long[] threadMinT = new long[PRODUCER_THREAD_NUM];
 
-    private List<StageFile> stageFileList = new ArrayList<>();
-    private DataFile dataFile = new DataFile();
-    private IndexFile indexFile = new IndexFile();
-
     private short[] tIndex;
     private int[] tIndexSummary;
     private Map<Integer, Integer> tIndexOverflow = new HashMap<>();
@@ -41,19 +38,22 @@ public class DefaultMessageStoreImpl extends MessageStore {
     private long tMaxValue = Long.MIN_VALUE;
     private volatile boolean rewriteDone = false;
 
-    private ThreadLocal<ByteBuffer> threadBufferForReadA1 = ThreadLocal.withInitial(()
-            -> ByteBuffer.allocateDirect(READ_A1_BUFFER_SIZE));
-    private ThreadLocal<ByteBuffer> threadBufferForReadA2 = ThreadLocal.withInitial(()
-            -> ByteBuffer.allocateDirect(READ_A2_BUFFER_SIZE));
-    private ThreadLocal<ByteBuffer> threadBufferForReadAI = ThreadLocal.withInitial(()
-            -> ByteBuffer.allocateDirect(READ_AI_BUFFER_SIZE));
-    private ThreadLocal<ByteBuffer> threadBufferForReadBody = ThreadLocal.withInitial(()
-            -> ByteBuffer.allocateDirect(READ_BODY_BUFFER_SIZE));
+    private List<StageFile> stageFileList = new ArrayList<>();
+    private ThreadLocal<StageFile> threadStageFile = ThreadLocal.withInitial(() -> {
+        StageFile stageFile = new StageFile(threadIdHolder.get(), tBase);
+        stageFileList.add(stageFile);
+        return stageFile;
+    });
+
+    private DataFile dataFile = new DataFile();
+    private IndexFile indexFile = new IndexFile();
+
+    private ThreadLocal<ByteBuffer> threadBufferForReadA1 = createBuffer(READ_A1_BUFFER_SIZE);
+    private ThreadLocal<ByteBuffer> threadBufferForReadA2 = createBuffer(READ_A2_BUFFER_SIZE);
+    private ThreadLocal<ByteBuffer> threadBufferForReadAI = createBuffer(READ_AI_BUFFER_SIZE);
+    private ThreadLocal<ByteBuffer> threadBufferForReadBody = createBuffer(READ_BODY_BUFFER_SIZE);
 
     public DefaultMessageStoreImpl() {
-        for (int i = 0; i < PRODUCER_THREAD_NUM; i++) {
-            stageFileList.add(new StageFile(i));
-        }
         Arrays.fill(threadMinT, -1);
     }
 
@@ -83,12 +83,11 @@ public class DefaultMessageStoreImpl extends MessageStore {
             }
         }
 
-//        if (putId == 20000 * 10000) {
-//            throw new RuntimeException("" + (System.currentTimeMillis() - PerfStats._putStart));
-//        }
+        if (putId == 20000 * 10000) {
+            throw new RuntimeException("" + (System.currentTimeMillis() - PerfStats._putStart));
+        }
 
-        message.setT(message.getT() - tBase);
-        stageFileList.get(threadId).writeMessage(message);
+        threadStageFile.get().writeMessage(message);
 
         if (putId % PUT_SAMPLE_RATE == 0) {
             logger.info("Write message to stage file with t: " + message.getT() + ", a: " + message.getA()
@@ -99,12 +98,12 @@ public class DefaultMessageStoreImpl extends MessageStore {
 
     private void rewriteFiles() {
         logger.info("Start rewrite files");
-//        long rewriteStart = System.currentTimeMillis();
+        long rewriteStart = System.currentTimeMillis();
         int putCounter = 0;
         int currentT = 0;
         List<Long> aBuffer = new ArrayList<>(A_INDEX_BLOCK_SIZE);
 
-        tMaxValue = stageFileList.stream().map(StageFile::getLastT).map(t -> t + tBase)
+        tMaxValue = stageFileList.stream().map(StageFile::getLastT)
                 .max(Comparator.comparingLong(t -> t)).orElse(0L);
         logger.info("Determined t max value: " + tMaxValue);
 
@@ -136,9 +135,9 @@ public class DefaultMessageStoreImpl extends MessageStore {
                     if (putCounter % REWRITE_SAMPLE_RATE == 0) {
                         logger.info("Write message to data file: " + putCounter);
                     }
-//                    if (putCounter == 200_000_000) {
-//                        throw new RuntimeException("" + (System.currentTimeMillis() - rewriteStart) + ", " + putCounter);
-//                    }
+                    if (putCounter == 200_000_000) {
+                        throw new RuntimeException("" + (System.currentTimeMillis() - rewriteStart) + ", " + putCounter);
+                    }
                     putCounter++;
                     writeCount++;
                 }
@@ -164,14 +163,10 @@ public class DefaultMessageStoreImpl extends MessageStore {
 
             // sort and store into a index block
             if (currentT % A_INDEX_BLOCK_SIZE == 0) {
-//                long start = System.nanoTime();
                 int size = aBuffer.size();
                 if (size > 1) {
                     Collections.sort(aBuffer);
                 }
-//                if (currentT % (A_INDEX_BLOCK_SIZE * 1024) == 0) {
-//                    logger.info("Sorted " + size + " a, time: " + (System.nanoTime() - start));
-//                }
                 long[] metaIndex = new long[(size - 1) / A_INDEX_META_FACTOR + 1 + 1];
                 for (int i = 0; i < size; i++) {
                     long a = aBuffer.get(i);

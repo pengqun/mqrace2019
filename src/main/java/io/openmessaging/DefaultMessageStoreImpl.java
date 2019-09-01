@@ -5,7 +5,6 @@ import org.apache.log4j.Logger;
 
 import java.nio.ByteBuffer;
 import java.util.*;
-import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -57,6 +56,7 @@ public class DefaultMessageStoreImpl extends MessageStore {
     private ThreadLocal<ByteBuffer> threadBufferForReadAI = createDirectBuffer(READ_AI_BUFFER_SIZE);
     private ThreadLocal<ByteBuffer> threadBufferForReadBody = createDirectBuffer(READ_BODY_BUFFER_SIZE);
 
+    private ThreadPoolExecutor dataFileWriter = (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
     private ThreadPoolExecutor aiIndexWriter = (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
 
     public DefaultMessageStoreImpl() {
@@ -89,9 +89,9 @@ public class DefaultMessageStoreImpl extends MessageStore {
             }
         }
 
-        if (putId == 20000 * 10000) {
-            throw new RuntimeException("" + (System.currentTimeMillis() - PerfStats._putStart));
-        }
+//        if (putId == 20000 * 10000) {
+//            throw new RuntimeException("" + (System.currentTimeMillis() - PerfStats._putStart));
+//        }
 
         threadStageFile.get().writeMessage(message);
 
@@ -109,7 +109,6 @@ public class DefaultMessageStoreImpl extends MessageStore {
         int putCounter = 0;
         int currentT = 0;
         List<Long> aBuffer = new ArrayList<>(A_INDEX_BLOCK_SIZE);
-        AtomicInteger pending = new AtomicInteger();
 
         tMaxValue = Arrays.stream(threadMaxT).max().orElse(tMaxValue);
         logger.info("Determined t max value: " + tMaxValue);
@@ -132,10 +131,11 @@ public class DefaultMessageStoreImpl extends MessageStore {
                 }
                 Message head;
                 while ((head = stageFile.peekMessage()) != null && head.getT() == currentT) {
-                    // Got ordered message
                     Message message = stageFile.consumePeeked();
-                    dataFile.writeA(message.getA());
-                    dataFile.writeBody(message.getBody());
+                    dataFileWriter.execute(() -> {
+                        dataFile.writeA(message.getA());
+                        dataFile.writeBody(message.getBody());
+                    });
 
                     aBuffer.add(message.getA());
 
@@ -171,7 +171,6 @@ public class DefaultMessageStoreImpl extends MessageStore {
             // sort and store into a index block
             if (currentT % A_INDEX_BLOCK_SIZE == 0) {
                 List<Long> finalABuffer = aBuffer;
-                pending.incrementAndGet();
                 aiIndexWriter.execute(() -> {
                     int size = finalABuffer.size();
                     if (size > 1) {
@@ -188,21 +187,26 @@ public class DefaultMessageStoreImpl extends MessageStore {
                     // Store max a in last element
                     metaIndex[metaIndex.length - 1] = finalABuffer.get(size - 1);
                     indexFile.getMetaIndexList().add(metaIndex);
-                    pending.decrementAndGet();
                 });
                 aBuffer = new ArrayList<>(A_INDEX_BLOCK_SIZE);
             }
         }
 
+        while (dataFileWriter.getQueue().size() + dataFileWriter.getActiveCount() > 0) {
+            logger.info("Waiting for data file writer to finish");
+            LockSupport.parkNanos(1_000_000_000);
+        }
+        dataFileWriter.shutdown();
+
+        while (aiIndexWriter.getQueue().size() + aiIndexWriter.getActiveCount() > 0) {
+            logger.info("Waiting for index file writer to finish");
+            LockSupport.parkNanos(1_000_000_000);
+        }
+        aiIndexWriter.shutdown();
+
         dataFile.flushABuffer();
         dataFile.flushBodyBuffer();
-
-        while (pending.get() > 0) {
-            logger.info("Waiting for index file writing done");
-            LockSupport.parkNanos(100_000_000);
-        }
         indexFile.flushABuffer();
-        aiIndexWriter.shutdown();
 
         logger.info("Done rewrite files, msg count: " + putCounter
                 + ", index list size: " + indexFile.getMetaIndexList().size()

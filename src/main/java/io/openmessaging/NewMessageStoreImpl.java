@@ -127,7 +127,7 @@ public class NewMessageStoreImpl extends MessageStore {
             }
         }
 
-        if (putId == 20000 * 10000) {
+        if (putId == 10000 * 10000) {
             throw new RuntimeException("" + (System.currentTimeMillis() - _putStart));
         }
 
@@ -589,24 +589,15 @@ public class NewMessageStoreImpl extends MessageStore {
         long fileOffset;
         Message peeked;
         boolean doneRead;
-        byte[] taBytes = new byte[12];
 
         void writeMessage(Message message) {
-            if (!byteBufferForWrite.hasRemaining()) {
-                flushBuffer();
-            }
-            int tDiff = (int) (message.getT() - tBase);
-            for (int i = 3; i >= 0; i--) {
-                taBytes[i] = (byte) (tDiff & 0xFF);
-                tDiff >>= 8;
-            }
-            long a = message.getA();
-            for (int i = 11; i >= 4; i--) {
-                taBytes[i] = (byte) (a & 0xFF);
-                a >>= 8;
-            }
-            byteBufferForWrite.put(taBytes);
-            byteBufferForWrite.put(message.getBody());
+//            if (!byteBufferForWrite.hasRemaining()) {
+//                flushBuffer();
+//            }
+//            int tDiff = (int) (message.getT() - tBase);
+//            byteBufferForWrite.putInt(tDiff);
+//            byteBufferForWrite.putLong(message.getA());
+//            byteBufferForWrite.put(message.getBody());
         }
 
         void flushBuffer() {
@@ -651,17 +642,8 @@ public class NewMessageStoreImpl extends MessageStore {
                     return null;
                 }
             }
-            byteBufferForRead.get(taBytes);
-            int t = 0;
-            for (int i = 0; i < 4; i++) {
-                t <<= 8;
-                t |= (taBytes[i] & 0xFF);
-            }
-            long a = 0;
-            for (int i = 4; i < 12; i++) {
-                a <<= 8;
-                a |= (taBytes[i] & 0xFF);
-            }
+            int t = byteBufferForRead.getInt();
+            long a = byteBufferForRead.getLong();
             byte[] body = new byte[BODY_BYTE_LENGTH];
             byteBufferForRead.get(body);
 

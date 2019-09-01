@@ -591,13 +591,13 @@ public class NewMessageStoreImpl extends MessageStore {
         boolean doneRead;
 
         void writeMessage(Message message) {
-//            if (!byteBufferForWrite.hasRemaining()) {
-//                flushBuffer();
-//            }
-//            int tDiff = (int) (message.getT() - tBase);
-//            byteBufferForWrite.putInt(tDiff);
-//            byteBufferForWrite.putLong(message.getA());
-//            byteBufferForWrite.put(message.getBody());
+            if (!byteBufferForWrite.hasRemaining()) {
+                flushBuffer();
+            }
+            int tDiff = (int) (message.getT() - tBase);
+            byteBufferForWrite.putInt(tDiff);
+            byteBufferForWrite.putLong(message.getA());
+            byteBufferForWrite.put(message.getBody());
         }
 
         void flushBuffer() {

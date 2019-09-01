@@ -133,11 +133,11 @@ public class NewMessageStoreImpl extends MessageStore {
 
 //        stageFileList.get(threadId).writeMessage(message);
 
-        if (putId % PUT_SAMPLE_RATE == 0) {
-            logger.info("Write message to stage file with t: " + message.getT() + ", a: " + message.getA()
-                    + ", time: " + (System.nanoTime() - putStart) + ", putId: " + putId
-            );
-        }
+//        if (putId % PUT_SAMPLE_RATE == 0) {
+//            logger.info("Write message to stage file with t: " + message.getT() + ", a: " + message.getA()
+//                    + ", time: " + (System.nanoTime() - putStart) + ", putId: " + putId
+//            );
+//        }
     }
 
     private void rewriteFiles() {

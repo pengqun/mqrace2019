@@ -33,6 +33,7 @@ public class DefaultMessageStoreImpl extends MessageStore {
     private AtomicInteger threadIdCounter = new AtomicInteger();
     private ThreadLocal<Integer> threadIdHolder = ThreadLocal.withInitial(() -> threadIdCounter.getAndIncrement());
     private long[] threadMinT = new long[PRODUCER_THREAD_NUM];
+    private long[] threadMaxT = new long[PRODUCER_THREAD_NUM];
 
     private short[] tIndex;
     private int[] tIndexSummary;
@@ -43,7 +44,7 @@ public class DefaultMessageStoreImpl extends MessageStore {
 
     private List<StageFile> stageFileList = new ArrayList<>();
     private ThreadLocal<StageFile> threadStageFile = ThreadLocal.withInitial(() -> {
-        StageFile stageFile = new StageFile(threadIdHolder.get(), tBase);
+        StageFile stageFile = new StageFile(threadIdHolder.get());
         stageFileList.add(stageFile);
         return stageFile;
     });
@@ -60,6 +61,7 @@ public class DefaultMessageStoreImpl extends MessageStore {
 
     public DefaultMessageStoreImpl() {
         Arrays.fill(threadMinT, -1);
+        Arrays.fill(threadMaxT, -1);
     }
 
     @Override
@@ -87,11 +89,13 @@ public class DefaultMessageStoreImpl extends MessageStore {
             }
         }
 
-//        if (putId == 20000 * 10000) {
-//            throw new RuntimeException("" + (System.currentTimeMillis() - PerfStats._putStart));
-//        }
+        if (putId == 20000 * 10000) {
+            throw new RuntimeException("" + (System.currentTimeMillis() - PerfStats._putStart));
+        }
 
         threadStageFile.get().writeMessage(message);
+
+        threadMaxT[threadIdHolder.get()] = message.getT();
 
 //        if (putId % PUT_SAMPLE_RATE == 0) {
 //            logger.info("Write message to stage file with t: " + message.getT() + ", a: " + message.getA()
@@ -107,8 +111,7 @@ public class DefaultMessageStoreImpl extends MessageStore {
         List<Long> aBuffer = new ArrayList<>(A_INDEX_BLOCK_SIZE);
         AtomicInteger pending = new AtomicInteger();
 
-        tMaxValue = stageFileList.stream().map(StageFile::getLastT)
-                .max(Comparator.comparingLong(t -> t)).orElse(0L);
+        tMaxValue = Arrays.stream(threadMaxT).max().orElse(tMaxValue);
         logger.info("Determined t max value: " + tMaxValue);
 
         tIndex = new short[(int) (tMaxValue - tBase + 1)];

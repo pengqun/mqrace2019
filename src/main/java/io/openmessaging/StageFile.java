@@ -5,8 +5,10 @@ import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ThreadPoolExecutor;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 import static io.openmessaging.Constants.*;
 
@@ -17,12 +19,16 @@ class StageFile {
     private FileChannel fileChannel;
     private ByteBuffer byteBufferForWrite;
     private ByteBuffer byteBufferForRead;
-    private long tBase;
-    private long fileOffset;
+    private long readOffset;
     private Message peeked;
     private boolean doneRead;
 
-    StageFile(int index, long tBase) {
+    private long lastT = 0;
+    private long prevT = 0;
+    private int overflowIndex = 0;
+    private List<Long> overflowList = new ArrayList<>();
+
+    StageFile(int index) {
         RandomAccessFile raf;
         try {
             raf = new RandomAccessFile(DATA_DIR + "stage" + index + ".data", "rw");
@@ -32,14 +38,21 @@ class StageFile {
         this.fileChannel = raf.getChannel();
         this.byteBufferForWrite = ByteBuffer.allocateDirect(WRITE_STAGE_BUFFER_SIZE);
         this.byteBufferForRead = ByteBuffer.allocateDirect(READ_STAGE_BUFFER_SIZE);
-        this.tBase = tBase;
     }
 
     void writeMessage(Message message) {
         if (!byteBufferForWrite.hasRemaining()) {
             flushBuffer();
         }
-        byteBufferForWrite.putInt((int) (message.getT() - tBase));
+        long tDiff = message.getT() - lastT;
+        if (tDiff < 255) {
+            byteBufferForWrite.put((byte) tDiff);
+        } else {
+            byteBufferForWrite.put((byte) 255);
+            overflowList.add(tDiff);
+        }
+        lastT = message.getT();
+
         byteBufferForWrite.putLong(message.getA());
         byteBufferForWrite.put(message.getBody());
     }
@@ -52,17 +65,6 @@ class StageFile {
             throw new RuntimeException("write error");
         }
         byteBufferForWrite.clear();
-    }
-
-    long getLastT() {
-        ByteBuffer byteBuffer = ByteBuffer.allocate(MSG_BYTE_LENGTH);
-        try {
-            fileChannel.read(byteBuffer, fileChannel.size() - MSG_BYTE_LENGTH);
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-        byteBuffer.flip();
-        return byteBuffer.getInt() + tBase;
     }
 
     long fileSize() {
@@ -86,7 +88,13 @@ class StageFile {
                 return null;
             }
         }
-        int t = byteBufferForRead.getInt();
+        long tDiff = byteBufferForRead.get() & 0xff;
+        if (tDiff == 255) {
+            tDiff = overflowList.get(overflowIndex++);
+        }
+        long t = prevT + tDiff;
+        prevT = t;
+
         long a = byteBufferForRead.getLong();
         byte[] body = new byte[BODY_BYTE_LENGTH];
         byteBufferForRead.get(body);
@@ -105,7 +113,7 @@ class StageFile {
         byteBufferForRead.clear();
         int readBytes;
         try {
-            readBytes = fileChannel.read(byteBufferForRead, fileOffset);
+            readBytes = fileChannel.read(byteBufferForRead, readOffset);
         } catch (IOException e) {
             throw new RuntimeException("read error");
         }
@@ -113,7 +121,7 @@ class StageFile {
             doneRead = true;
             return false;
         }
-        fileOffset += readBytes;
+        readOffset += readBytes;
         byteBufferForRead.flip();
         return true;
     }

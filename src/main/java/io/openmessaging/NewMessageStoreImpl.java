@@ -131,7 +131,7 @@ public class NewMessageStoreImpl extends MessageStore {
             throw new RuntimeException("" + (System.currentTimeMillis() - _putStart));
         }
 
-        stageFileList.get(threadId).writeMessage(message);
+//        stageFileList.get(threadId).writeMessage(message);
 
         if (putId % PUT_SAMPLE_RATE == 0) {
             logger.info("Write message to stage file with t: " + message.getT() + ", a: " + message.getA()

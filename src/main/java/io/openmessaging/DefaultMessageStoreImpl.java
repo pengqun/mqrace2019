@@ -130,7 +130,7 @@ public class DefaultMessageStoreImpl extends MessageStore {
                     iterator.remove();
                 }
                 Message head;
-                while ((head = stageFile.peekMessage()) != null && head.getT() == currentT) {
+                while ((head = stageFile.peekMessage()) != null && head.getT() == currentT + tBase) {
                     Message message = stageFile.consumePeeked();
                     dataFileWriter.execute(() -> {
                         dataFile.writeA(message.getA());

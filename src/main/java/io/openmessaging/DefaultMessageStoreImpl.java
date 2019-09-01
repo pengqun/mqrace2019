@@ -215,7 +215,7 @@ public class DefaultMessageStoreImpl extends MessageStore {
         if (getId == 0) {
             PerfStats._putEnd = System.currentTimeMillis();
             PerfStats._getStart = PerfStats._putEnd;
-//            PerfStats.printStats(this);
+            PerfStats.printStats(this);
         }
         if (getId % GET_SAMPLE_RATE == 0) {
             logger.info("getMessage - tMin: " + tMin + ", tMax: " + tMax

@@ -11,7 +11,6 @@ class Constants {
     static final int BODY_BYTE_LENGTH = 34;
     static final int MSG_BYTE_LENGTH = 46;
 
-    static final int STAGE_SEGMENT_SIZE = 8 * 1024 * 1024;
     static final int DATA_SEGMENT_SIZE = 8 * 1024 * 1024;
 
     static final int T_INDEX_SUMMARY_FACTOR = 32;

@@ -127,7 +127,7 @@ public class NewMessageStoreImpl extends MessageStore {
             }
         }
 
-        if (putId == 10000 * 10000) {
+        if (putId == 20000 * 10000) {
             throw new RuntimeException("" + (System.currentTimeMillis() - _putStart));
         }
 
@@ -582,24 +582,6 @@ public class NewMessageStoreImpl extends MessageStore {
         return new SumAndCount(sum, count);
     }
 
-    public static byte[] longToBytes(long l) {
-        byte[] result = new byte[8];
-        for (int i = 7; i >= 0; i--) {
-            result[i] = (byte)(l & 0xFF);
-            l >>= 8;
-        }
-        return result;
-    }
-
-    public static long bytesToLong(byte[] b) {
-        long result = 0;
-        for (int i = 0; i < 8; i++) {
-            result <<= 8;
-            result |= (b[i] & 0xFF);
-        }
-        return result;
-    }
-
     private class StageFile {
         FileChannel fileChannel;
         ByteBuffer byteBufferForWrite;
@@ -607,20 +589,23 @@ public class NewMessageStoreImpl extends MessageStore {
         long fileOffset;
         Message peeked;
         boolean doneRead;
-        byte[] result = new byte[8];
+        byte[] taBytes = new byte[12];
 
         void writeMessage(Message message) {
             if (!byteBufferForWrite.hasRemaining()) {
                 flushBuffer();
             }
             int tDiff = (int) (message.getT() - tBase);
-            byteBufferForWrite.putInt(tDiff);
+            for (int i = 3; i >= 0; i--) {
+                taBytes[i] = (byte) (tDiff & 0xFF);
+                tDiff >>= 8;
+            }
             long a = message.getA();
-            for (int i = 7; i >= 0; i--) {
-                result[i] = (byte)(a & 0xFF);
+            for (int i = 11; i >= 4; i--) {
+                taBytes[i] = (byte) (a & 0xFF);
                 a >>= 8;
             }
-            byteBufferForWrite.put(result);
+            byteBufferForWrite.put(taBytes);
             byteBufferForWrite.put(message.getBody());
         }
 
@@ -666,8 +651,17 @@ public class NewMessageStoreImpl extends MessageStore {
                     return null;
                 }
             }
-            int t = byteBufferForRead.getInt();
-            long a = byteBufferForRead.getLong();
+            byteBufferForRead.get(taBytes);
+            int t = 0;
+            for (int i = 0; i < 4; i++) {
+                t <<= 8;
+                t |= (taBytes[i] & 0xFF);
+            }
+            long a = 0;
+            for (int i = 4; i < 12; i++) {
+                a <<= 8;
+                a |= (taBytes[i] & 0xFF);
+            }
             byte[] body = new byte[BODY_BYTE_LENGTH];
             byteBufferForRead.get(body);
 

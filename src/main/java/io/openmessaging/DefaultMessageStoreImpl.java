@@ -61,10 +61,9 @@ public class DefaultMessageStoreImpl extends MessageStore {
     public void put(Message message) {
         long putStart = System.nanoTime();
         int putId = putCounter.getAndIncrement();
-        int threadId = threadIdHolder.get();
 
         if (tBase < 0) {
-            threadMinT[threadId] = message.getT();
+            threadMinT[threadIdHolder.get()] = message.getT();
             if (putId == 0) {
                 PerfStats._putStart = System.currentTimeMillis();
                 long min = Long.MAX_VALUE;

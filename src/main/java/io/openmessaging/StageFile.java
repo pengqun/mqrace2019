@@ -27,9 +27,9 @@ class StageFile {
         } catch (FileNotFoundException e) {
             throw new RuntimeException("no file");
         }
-        fileChannel = raf.getChannel();
-        byteBufferForWrite = ByteBuffer.allocateDirect(WRITE_STAGE_BUFFER_SIZE);
-        byteBufferForRead = ByteBuffer.allocateDirect(READ_STAGE_BUFFER_SIZE);
+        this.fileChannel = raf.getChannel();
+        this.byteBufferForWrite = ByteBuffer.allocateDirect(WRITE_STAGE_BUFFER_SIZE);
+        this.byteBufferForRead = ByteBuffer.allocateDirect(READ_STAGE_BUFFER_SIZE);
         this.tBase = tBase;
     }
 

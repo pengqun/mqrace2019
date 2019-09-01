@@ -26,8 +26,8 @@ class IndexFile {
             throw new RuntimeException("file error");
         }
         this.aiChannel = aiFile.getChannel();
-        metaIndexList = new ArrayList<>();
-        aiBufferForWrite = ByteBuffer.allocateDirect(WRITE_AI_BUFFER_SIZE);
+        this.metaIndexList = new ArrayList<>();
+        this.aiBufferForWrite = ByteBuffer.allocateDirect(WRITE_AI_BUFFER_SIZE);
     }
 
     void writeA(long a) {

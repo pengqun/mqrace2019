@@ -266,9 +266,10 @@ public class NewMessageStoreImpl extends MessageStore {
     public List<Message> getMessage(long aMin, long aMax, long tMin, long tMax) {
         long getStart = System.currentTimeMillis();
         int getId = getCounter.getAndIncrement();
-        if (IS_TEST_RUN && getId == 0) {
+        if (getId == 0) {
             _putEnd = System.currentTimeMillis();
             _getStart = _putEnd;
+            printStats();
         }
         if (getId % GET_SAMPLE_RATE == 0) {
             logger.info("getMessage - tMin: " + tMin + ", tMax: " + tMax
@@ -293,7 +294,7 @@ public class NewMessageStoreImpl extends MessageStore {
 
         tMax = Math.min(tMax, tMaxValue);
 
-        ArrayList<Message> result = new ArrayList<>();
+        ArrayList<Message> result = new ArrayList<>(4096);
         int tDiff = (int) (tMin - tBase);
         long offset = getOffsetByTDiff(tDiff);
         long endOffset = getOffsetByTDiff((int) (tMax - tBase + 1));
@@ -330,9 +331,8 @@ public class NewMessageStoreImpl extends MessageStore {
         aByteBufferForRead.clear();
         bodyByteBufferForRead.clear();
 
-        if (IS_TEST_RUN) {
-            getMsgCounter.addAndGet(result.size());
-        }
+        getMsgCounter.addAndGet(result.size());
+
         if (getId % GET_SAMPLE_RATE == 0) {
             logger.info("Return sorted result with size: " + result.size()
                     + ", time: " + (System.currentTimeMillis() - getStart) + ", getId: " + getId);
@@ -344,42 +344,16 @@ public class NewMessageStoreImpl extends MessageStore {
     public long getAvgValue(long aMin, long aMax, long tMin, long tMax) {
         long avgStart = System.currentTimeMillis();
         int avgId = avgCounter.getAndIncrement();
-        if (IS_TEST_RUN && avgId == 0) {
+        if (avgId == 0) {
             _getEnd = System.currentTimeMillis();
             _avgStart = _getEnd;
         }
         if (avgId % AVG_SAMPLE_RATE == 0) {
-            logger.info("getAvgValue - tMin: " + tMin + ", tMax: " + tMax
-                    + ", aMin: " + aMin + ", aMax: " + aMax
+            logger.info("getAvgValue - tMin: " + tMin + ", tMax: " + tMax + ", aMin: " + aMin + ", aMax: " + aMax
                     + ", tRange: " + (tMax - tMin) + ", avgId: " + avgId);
-            if (IS_TEST_RUN && avgId == TEST_BOUNDARY) {
-                long putDuration = _putEnd - _putStart;
-                long getDuration = _getEnd - _getStart;
-                long avgDuration = System.currentTimeMillis() - _avgStart;
-                int putScore = (int) (putCounter.get() / putDuration);
-                int getScore = (int) (getMsgCounter.get() / getDuration);
-                int avgScore = (int) (avgMsgCounter.get() / avgDuration);
-                int totalScore = putScore + getScore + avgScore;
-                logger.info("Avg result: \n"
-                        + "\tread a: " + readACounter.get() + ", used a: " + usedACounter.get()
-                        + ", skip a: " + skipACounter.get()
-                        + ", use ratio: " + ((double) usedACounter.get() / readACounter.get())
-                        + ", visit ratio: " + ((double) (usedACounter.get() + skipACounter.get()) / readACounter.get()) + "\n"
-                        + "\tread ai: " + readAICounter.get() + ", used ai: " + usedAICounter.get() + ", skip ai: " + skipAICounter.get()
-                        + ", jump ai: " + jump1AICounter.get() + " / " + jump2AICounter.get() + " / " + jump3AICounter.get()
-                        + ", use ratio: " + ((double) usedAICounter.get() / readAICounter.get()) + "\n"
-                        + ", visit ratio: " + ((double) (usedAICounter.get() + skipAICounter.get()) / readAICounter.get()) + "\n"
-                        + "\tcover ratio: " + ((double) usedAICounter.get() / (usedAICounter.get() + usedACounter.get()))+ "\n"
-                        + "\tfast smaller: " + fastSmallerCounter.get() + ", larger: " + fastLargerCounter.get() + "\n"
-                );
-                logger.info("Test result: \n"
-                        + "\tput: " + putCounter.get() + " / " + putDuration + "ms = " + putScore + "\n"
-                        + "\tget: " + getMsgCounter.get() + " / " + getDuration + "ms = " + getScore + "\n"
-                        + "\tavg: " + avgMsgCounter.get() + " / " + avgDuration + "ms = " + avgScore + "\n"
-                        + "\ttotal: " + totalScore + "\n"
-                );
-                throw new RuntimeException(putScore + "/" + getScore + "/" + avgScore);
-            }
+        }
+        if (avgId == TEST_BOUNDARY) {
+            printStats();
         }
 
         long sum = 0;
@@ -434,9 +408,8 @@ public class NewMessageStoreImpl extends MessageStore {
         if (avgId % AVG_SAMPLE_RATE == 0) {
             logger.info("Got " + count + ", time: " + (System.currentTimeMillis() - avgStart) + ", avgId: " + avgId);
         }
-        if (IS_TEST_RUN) {
-            avgMsgCounter.addAndGet(count);
-        }
+        avgMsgCounter.addAndGet(count);
+
         return count > 0 ? sum / count : 0;
     }
 
@@ -841,4 +814,33 @@ public class NewMessageStoreImpl extends MessageStore {
     private long _getStart = 0;
     private long _getEnd = 0;
     private long _avgStart = 0;
+
+    private void printStats() {
+        long putDuration = _putEnd - _putStart;
+        long getDuration = _getEnd - _getStart;
+        long avgDuration = System.currentTimeMillis() - _avgStart;
+        int putScore = (int) (putCounter.get() / putDuration);
+        int getScore = (int) (getMsgCounter.get() / getDuration);
+        int avgScore = (int) (avgMsgCounter.get() / avgDuration);
+        int totalScore = putScore + getScore + avgScore;
+        logger.info("Avg result: \n"
+                + "\tread a: " + readACounter.get() + ", used a: " + usedACounter.get()
+                + ", skip a: " + skipACounter.get()
+                + ", use ratio: " + ((double) usedACounter.get() / readACounter.get())
+                + ", visit ratio: " + ((double) (usedACounter.get() + skipACounter.get()) / readACounter.get()) + "\n"
+                + "\tread ai: " + readAICounter.get() + ", used ai: " + usedAICounter.get() + ", skip ai: " + skipAICounter.get()
+                + ", jump ai: " + jump1AICounter.get() + " / " + jump2AICounter.get() + " / " + jump3AICounter.get()
+                + ", use ratio: " + ((double) usedAICounter.get() / readAICounter.get()) + "\n"
+                + ", visit ratio: " + ((double) (usedAICounter.get() + skipAICounter.get()) / readAICounter.get()) + "\n"
+                + "\tcover ratio: " + ((double) usedAICounter.get() / (usedAICounter.get() + usedACounter.get()))+ "\n"
+                + "\tfast smaller: " + fastSmallerCounter.get() + ", larger: " + fastLargerCounter.get() + "\n"
+        );
+        logger.info("Test result: \n"
+                + "\tput: " + putCounter.get() + " / " + putDuration + "ms = " + putScore + "\n"
+                + "\tget: " + getMsgCounter.get() + " / " + getDuration + "ms = " + getScore + "\n"
+                + "\tavg: " + avgMsgCounter.get() + " / " + avgDuration + "ms = " + avgScore + "\n"
+                + "\ttotal: " + totalScore + "\n"
+        );
+        throw new RuntimeException(putScore + "/" + getScore + "/" + avgScore);
+    }
 }

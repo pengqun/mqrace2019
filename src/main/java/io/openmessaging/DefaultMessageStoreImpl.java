@@ -9,7 +9,6 @@ public class DefaultMessageStoreImpl extends MessageStore {
 
 //    private MessageStore myMessageStore = new SampleMessageStoreImpl();
 //    private MessageStore myMessageStore = new TestMessageStoreImpl();
-//    private MessageStore myMessageStore = new LsmMessageStoreImpl();
     private MessageStore myMessageStore = new NewMessageStoreImpl();
 
     @Override

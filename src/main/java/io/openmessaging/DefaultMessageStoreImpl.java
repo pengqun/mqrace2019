@@ -60,10 +60,10 @@ public class DefaultMessageStoreImpl extends MessageStore {
     @Override
     public void put(Message message) {
 //        long putStart = System.nanoTime();
-        int putId = putCounter.getAndIncrement();
 
         if (tBase < 0) {
             threadMinT[threadIdHolder.get()] = message.getT();
+            int putId = putCounter.getAndIncrement();
             if (putId == 0) {
                 PerfStats._putStart = System.currentTimeMillis();
                 long min = Long.MAX_VALUE;
@@ -82,9 +82,9 @@ public class DefaultMessageStoreImpl extends MessageStore {
             }
         }
 
-        if (putId == 20000 * 10000) {
-            throw new RuntimeException("" + (System.currentTimeMillis() - PerfStats._putStart));
-        }
+//        if (putId == 20000 * 10000) {
+//            throw new RuntimeException("" + (System.currentTimeMillis() - PerfStats._putStart));
+//        }
 
         threadStageFile.get().writeMessage(message);
 
@@ -133,9 +133,9 @@ public class DefaultMessageStoreImpl extends MessageStore {
 //                    if (putCounter % REWRITE_SAMPLE_RATE == 0) {
 //                        logger.info("Write message to data file: " + putCounter);
 //                    }
-                    if (putCounter == 200_000_000) {
-                        throw new RuntimeException("" + (System.currentTimeMillis() - rewriteStart) + ", " + putCounter);
-                    }
+//                    if (putCounter == 200_000_000) {
+//                        throw new RuntimeException("" + (System.currentTimeMillis() - rewriteStart) + ", " + putCounter);
+//                    }
                     putCounter++;
                     writeCount++;
                 }
@@ -191,17 +191,17 @@ public class DefaultMessageStoreImpl extends MessageStore {
 
     @Override
     public List<Message> getMessage(long aMin, long aMax, long tMin, long tMax) {
-        long getStart = System.currentTimeMillis();
-        int getId = getCounter.getAndIncrement();
-        if (getId == 0) {
-            PerfStats._putEnd = System.currentTimeMillis();
-            PerfStats._getStart = PerfStats._putEnd;
+//        long getStart = System.currentTimeMillis();
+//        int getId = getCounter.getAndIncrement();
+//        if (getId == 0) {
+//            PerfStats._putEnd = System.currentTimeMillis();
+//            PerfStats._getStart = PerfStats._putEnd;
 //            PerfStats.printStats(this);
-        }
-        if (getId % GET_SAMPLE_RATE == 0) {
-            logger.info("getMessage - tMin: " + tMin + ", tMax: " + tMax
-                    + ", aMin: " + aMin + ", aMax: " + aMax + ", getId: " + getId);
-        }
+//        }
+//        if (getId % GET_SAMPLE_RATE == 0) {
+//            logger.info("getMessage - tMin: " + tMin + ", tMax: " + tMax
+//                    + ", aMin: " + aMin + ", aMax: " + aMax + ", getId: " + getId);
+//        }
         if (!rewriteDone) {
             synchronized (this) {
                 if (!rewriteDone) {
@@ -215,13 +215,13 @@ public class DefaultMessageStoreImpl extends MessageStore {
                     rewriteFiles();
                     rewriteDone = true;
                 }
-                logger.info("Rewrite task has finished, time: " + (System.currentTimeMillis() - getStart));
+                logger.info("Rewrite task has finished, time: " + (System.currentTimeMillis() - _getStart));
             }
         }
 
         tMax = Math.min(tMax, tMaxValue);
 
-        ArrayList<Message> result = new ArrayList<>(4096);
+        ArrayList<Message> result = new ArrayList<>();
         int tDiff = (int) (tMin - tBase);
         long offset = getOffsetByTDiff(tDiff);
         long endOffset = getOffsetByTDiff((int) (tMax - tBase + 1));
@@ -258,30 +258,31 @@ public class DefaultMessageStoreImpl extends MessageStore {
         aByteBufferForRead.clear();
         bodyByteBufferForRead.clear();
 
-        getMsgCounter.addAndGet(result.size());
-
-        if (getId % GET_SAMPLE_RATE == 0) {
-            logger.info("Return sorted result with size: " + result.size()
-                    + ", time: " + (System.currentTimeMillis() - getStart) + ", getId: " + getId);
-        }
+//        getMsgCounter.addAndGet(result.size());
+//
+//        if (getId % GET_SAMPLE_RATE == 0) {
+//            logger.info("Return sorted result with size: " + result.size()
+//                    + ", time: " + (System.currentTimeMillis() - getStart) + ", getId: " + getId);
+//        }
         return result;
     }
 
     @Override
     public long getAvgValue(long aMin, long aMax, long tMin, long tMax) {
-        long avgStart = System.currentTimeMillis();
-        int avgId = avgCounter.getAndIncrement();
-        if (avgId == 0) {
-            PerfStats._getEnd = System.currentTimeMillis();
-            PerfStats._avgStart = PerfStats._getEnd;
-        }
-        if (avgId % AVG_SAMPLE_RATE == 0) {
-            logger.info("getAvgValue - tMin: " + tMin + ", tMax: " + tMax + ", aMin: " + aMin + ", aMax: " + aMax
-                    + ", tRange: " + (tMax - tMin) + ", avgId: " + avgId);
-        }
-        if (avgId == TEST_BOUNDARY) {
-            PerfStats.printStats(this);
-        }
+//        long avgStart = System.currentTimeMillis();
+//        int avgId = avgCounter.getAndIncrement();
+//        if (avgId == 0) {
+//            PerfStats._getEnd = System.currentTimeMillis();
+//            PerfStats._avgStart = PerfStats._getEnd;
+//        }
+//        if (avgId % AVG_SAMPLE_RATE == 0) {
+//            logger.info("getAvgValue - tMin: " + tMin + ", tMax: " + tMax + ", aMin: " + aMin + ", aMax: " + aMax
+//                    + ", tRange: " + (tMax - tMin) + ", avgId: " + avgId);
+//        }
+//        if (avgId == TEST_BOUNDARY) {
+//            PerfStats.printStats(this);
+//        }
+        int avgId = 0;
 
         long sum = 0;
         int count = 0;
@@ -332,10 +333,10 @@ public class DefaultMessageStoreImpl extends MessageStore {
             }
         }
 
-        if (avgId % AVG_SAMPLE_RATE == 0) {
-            logger.info("Got " + count + ", time: " + (System.currentTimeMillis() - avgStart) + ", avgId: " + avgId);
-        }
-        avgMsgCounter.addAndGet(count);
+//        if (avgId % AVG_SAMPLE_RATE == 0) {
+//            logger.info("Got " + count + ", time: " + (System.currentTimeMillis() - avgStart) + ", avgId: " + avgId);
+//        }
+//        avgMsgCounter.addAndGet(count);
 
         return count > 0 ? sum / count : 0;
     }
@@ -343,9 +344,9 @@ public class DefaultMessageStoreImpl extends MessageStore {
     private SumAndCount getAvgValueNormal(int avgId, long aMin, long aMax, int tMin, int tMax) {
 //        long avgStart = System.nanoTime();
         long sum = 0;
-        int read = 0;
         int count = 0;
-        int skip = 0;
+//        int read = 0;
+//        int skip = 0;
 
         long offset = getOffsetByTDiff(tMin);
         long endOffset = getOffsetByTDiff(tMax + 1);
@@ -360,15 +361,17 @@ public class DefaultMessageStoreImpl extends MessageStore {
             }
             while (msgCount > 0) {
                 if (aByteBufferForRead.remaining() == 0) {
-                    read += dataFile.fillReadABuffer(aByteBufferForRead, offset, endOffset);
+//                    read +=
+                    dataFile.fillReadABuffer(aByteBufferForRead, offset, endOffset);
                 }
                 long a = aByteBufferForRead.getLong();
                 if (a >= aMin && a <= aMax) {
                     sum += a;
                     count++;
-                } else {
-                    skip++;
                 }
+//                else {
+//                    skip++;
+//                }
                 offset++;
                 msgCount--;
             }
@@ -389,12 +392,12 @@ public class DefaultMessageStoreImpl extends MessageStore {
     private SumAndCount getAvgValueFast(int avgId, long aMin, long aMax, int tMin, int tMax) {
 //        long avgStart = System.nanoTime();
         long sum = 0;
-        int read = 0;
         int count = 0;
-        int skip = 0;
-        int jump1 = 0;
-        int jump2 = 0;
-        int jump3 = 0;
+//        int read = 0;
+//        int skip = 0;
+//        int jump1 = 0;
+//        int jump2 = 0;
+//        int jump3 = 0;
 
         long[] metaIndex = indexFile.getMetaIndexList().get(tMin / A_INDEX_BLOCK_SIZE);
         if (metaIndex[0] > aMax) {
@@ -451,11 +454,12 @@ public class DefaultMessageStoreImpl extends MessageStore {
 
         for (long offset = startOffset; offset < endOffset; offset++) {
             if (aiByteBufferForRead.remaining() == 0) {
-                read += indexFile.fillReadAIBuffer(aiByteBufferForRead, offset, endOffset);
+//                read +=
+                indexFile.fillReadAIBuffer(aiByteBufferForRead, offset, endOffset);
             }
             long a = aiByteBufferForRead.getLong();
             if (a > aMax) {
-                jump3 += (endOffset - offset - 1);
+//                jump3 += (endOffset - offset - 1);
                 break;
             }
             if (a >= aMin) {

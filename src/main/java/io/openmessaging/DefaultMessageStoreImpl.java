@@ -86,8 +86,8 @@ public class DefaultMessageStoreImpl extends MessageStore {
             throw new RuntimeException("" + (System.currentTimeMillis() - PerfStats._putStart));
         }
 
-//        threadStageFile.get().writeMessage(message);
-//
+        threadStageFile.get().writeMessage(message);
+
 //        if (putId % PUT_SAMPLE_RATE == 0) {
 //            logger.info("Write message to stage file with t: " + message.getT() + ", a: " + message.getA()
 //                    + ", time: " + (System.nanoTime() - putStart) + ", putId: " + putId);

@@ -34,12 +34,12 @@ class StageFile {
     }
 
     void writeMessage(Message message) {
-        if (!byteBufferForWrite.hasRemaining()) {
-            flushBuffer();
-        }
-        byteBufferForWrite.putInt((int) (message.getT() - tBase));
-        byteBufferForWrite.putLong(message.getA());
-        byteBufferForWrite.put(message.getBody());
+//        if (!byteBufferForWrite.hasRemaining()) {
+//            flushBuffer();
+//        }
+//        byteBufferForWrite.putInt((int) (message.getT() - tBase));
+//        byteBufferForWrite.putLong(message.getA());
+//        byteBufferForWrite.put(message.getBody());
     }
 
     void flushBuffer() {

@@ -1,0 +1,8 @@
+#!/bin/zsh
+cat src/main/java/io/openmessaging/DefaultMessageStoreImpl.java  | grep alidata1 | grep "//"
+if [[ $? -eq 0 ]]; then
+   echo "NO!"
+   exit -1
+fi
+git commit -a -m "$1"
+

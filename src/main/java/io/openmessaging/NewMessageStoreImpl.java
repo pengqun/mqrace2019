@@ -82,7 +82,7 @@ public class NewMessageStoreImpl extends MessageStore {
     private ThreadLocal<ByteBuffer> threadBufferForReadBody = ThreadLocal.withInitial(()
             -> ByteBuffer.allocateDirect(READ_BODY_BUFFER_SIZE));
 
-    private List<StageFile> stageFileList = new LinkedList<>();
+    private List<StageFile> stageFileList = new ArrayList<>();
 
     public NewMessageStoreImpl() {
         for (int i = 0; i < PRODUCER_THREAD_NUM; i++) {
@@ -131,13 +131,13 @@ public class NewMessageStoreImpl extends MessageStore {
             throw new RuntimeException("" + (System.currentTimeMillis() - _putStart));
         }
 
-//        stageFileList.get(threadId).writeMessage(message);
+        stageFileList.get(threadId).writeMessage(message);
 
-//        if (putId % PUT_SAMPLE_RATE == 0) {
-//            logger.info("Write message to stage file with t: " + message.getT() + ", a: " + message.getA()
-//                    + ", time: " + (System.nanoTime() - putStart) + ", putId: " + putId
-//            );
-//        }
+        if (putId % PUT_SAMPLE_RATE == 0) {
+            logger.info("Write message to stage file with t: " + message.getT() + ", a: " + message.getA()
+                    + ", time: " + (System.nanoTime() - putStart) + ", putId: " + putId
+            );
+        }
     }
 
     private void rewriteFiles() {

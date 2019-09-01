@@ -20,8 +20,8 @@ public class DefaultMessageStoreImpl extends MessageStore {
 
     private static final Logger logger = Logger.getLogger(DefaultMessageStoreImpl.class);
 
-    private static final String DATA_DIR = "/alidata1/race2019/data/"; static final int TEST_BOUNDARY = 37000; static final int PRODUCER_THREAD_NUM = 12;
-//    private static final String DATA_DIR = "/tmp/"; static final int TEST_BOUNDARY = 9000; static final int PRODUCER_THREAD_NUM = 10;
+//    private static final String DATA_DIR = "/alidata1/race2019/data/"; static final int TEST_BOUNDARY = 37000; static final int PRODUCER_THREAD_NUM = 12;
+    private static final String DATA_DIR = "/tmp/"; static final int TEST_BOUNDARY = 9000; static final int PRODUCER_THREAD_NUM = 10;
 
     private static final int KEY_A_BYTE_LENGTH = 8;
     private static final int BODY_BYTE_LENGTH = 34;
@@ -107,12 +107,12 @@ public class DefaultMessageStoreImpl extends MessageStore {
 
     @Override
     public void put(Message message) {
-        long putStart = System.nanoTime();
-        int putId = putCounter.getAndIncrement();
+//        long putStart = System.nanoTime();
         int threadId = threadIdHolder.get();
 
         if (tBase < 0) {
             threadMinT[threadId] = message.getT();
+            int putId = putCounter.getAndIncrement();
             if (putId == 0) {
                 _putStart = System.currentTimeMillis();
                 long min = Long.MAX_VALUE;
@@ -137,11 +137,11 @@ public class DefaultMessageStoreImpl extends MessageStore {
 
         stageFileList.get(threadId).writeMessage(message);
 
-        if (putId % PUT_SAMPLE_RATE == 0) {
-            logger.info("Write message to stage file with t: " + message.getT() + ", a: " + message.getA()
-                    + ", time: " + (System.nanoTime() - putStart) + ", putId: " + putId
-            );
-        }
+//        if (putId % PUT_SAMPLE_RATE == 0) {
+//            logger.info("Write message to stage file with t: " + message.getT() + ", a: " + message.getA()
+//                    + ", time: " + (System.nanoTime() - putStart) + ", putId: " + putId
+//            );
+//        }
     }
 
     private void rewriteFiles() {

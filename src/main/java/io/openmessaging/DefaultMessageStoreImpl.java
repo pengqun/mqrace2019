@@ -108,34 +108,34 @@ public class DefaultMessageStoreImpl extends MessageStore {
     @Override
     public void put(Message message) {
 //        long putStart = System.nanoTime();
-        int threadId = threadIdHolder.get();
+        int putId = putCounter.getAndIncrement();
+//        int threadId = threadIdHolder.get();
 
-        if (tBase < 0) {
-            threadMinT[threadId] = message.getT();
-            int putId = putCounter.getAndIncrement();
-            if (putId == 0) {
-                _putStart = System.currentTimeMillis();
-                long min = Long.MAX_VALUE;
-                for (int i = 0; i < threadMinT.length; i++) {
-                    while (threadMinT[i] < 0) {
-                        LockSupport.parkNanos(1_000_000);
-                    }
-                    min = Math.min(min, threadMinT[i]);
-                }
-                tBase = min;
-                logger.info("Determined T base: " + tBase);
-            } else {
-                while (tBase < 0) {
-                    LockSupport.parkNanos(1_000_000);
-                }
-            }
-        }
-
-//        if (putId == 10000 * 10000) {
-//            throw new RuntimeException("" + (System.currentTimeMillis() - _putStart));
+//        if (tBase < 0) {
+//            threadMinT[threadId] = message.getT();
+//            if (putId == 0) {
+//                _putStart = System.currentTimeMillis();
+//                long min = Long.MAX_VALUE;
+//                for (int i = 0; i < threadMinT.length; i++) {
+//                    while (threadMinT[i] < 0) {
+//                        LockSupport.parkNanos(1_000_000);
+//                    }
+//                    min = Math.min(min, threadMinT[i]);
+//                }
+//                tBase = min;
+//                logger.info("Determined T base: " + tBase);
+//            } else {
+//                while (tBase < 0) {
+//                    LockSupport.parkNanos(1_000_000);
+//                }
+//            }
 //        }
 
-        stageFileList.get(threadId).writeMessage(message);
+        if (putId == 20000 * 10000) {
+            throw new RuntimeException("" + (System.currentTimeMillis() - _putStart));
+        }
+
+//        stageFileList.get(threadId).writeMessage(message);
 
 //        if (putId % PUT_SAMPLE_RATE == 0) {
 //            logger.info("Write message to stage file with t: " + message.getT() + ", a: " + message.getA()

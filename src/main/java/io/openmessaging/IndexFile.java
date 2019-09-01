@@ -14,6 +14,7 @@ import static io.openmessaging.Constants.*;
  * @author pengqun.pq
  */
 class IndexFile {
+    private static int index = 0;
     private FileChannel aiChannel;
     private List<long[]> metaIndexList;
     private ByteBuffer aiBufferForWrite;
@@ -21,7 +22,7 @@ class IndexFile {
     IndexFile() {
         RandomAccessFile aiFile;
         try {
-            aiFile = new RandomAccessFile(DATA_DIR + "ai.data", "rw");
+            aiFile = new RandomAccessFile(DATA_DIR + "ai" + (index++) + ".data", "rw");
         } catch (FileNotFoundException e) {
             throw new RuntimeException("file error");
         }

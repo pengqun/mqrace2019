@@ -50,14 +50,15 @@ public class DefaultMessageStoreImpl extends MessageStore {
 
     private DataFile dataFile = new DataFile();
     private IndexFile indexFile = new IndexFile();
+    private IndexFile subIndexFile = new IndexFile();
 
     private ThreadLocal<ByteBuffer> threadBufferForReadA1 = createDirectBuffer(READ_A1_BUFFER_SIZE);
     private ThreadLocal<ByteBuffer> threadBufferForReadA2 = createDirectBuffer(READ_A2_BUFFER_SIZE);
     private ThreadLocal<ByteBuffer> threadBufferForReadAI = createDirectBuffer(READ_AI_BUFFER_SIZE);
     private ThreadLocal<ByteBuffer> threadBufferForReadBody = createDirectBuffer(READ_BODY_BUFFER_SIZE);
 
-    private ThreadPoolExecutor dataFileWriter = (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
     private ThreadPoolExecutor aiIndexWriter = (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
+    private ThreadPoolExecutor aisIndexWriter = (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
 
     public DefaultMessageStoreImpl() {
         Arrays.fill(threadMinT, -1);
@@ -109,6 +110,7 @@ public class DefaultMessageStoreImpl extends MessageStore {
         int putCounter = 0;
         int currentT = 0;
         List<Long> aBuffer = new ArrayList<>(A_INDEX_BLOCK_SIZE);
+        List<Long> asBuffer = new ArrayList<>(A_INDEX_SUB_BLOCK_SIZE);
 
         tMaxValue = Arrays.stream(threadMaxT).max().orElse(tMaxValue);
         logger.info("Determined t max value: " + tMaxValue);
@@ -132,12 +134,11 @@ public class DefaultMessageStoreImpl extends MessageStore {
                 Message head;
                 while ((head = stageFile.peekMessage()) != null && head.getT() == currentT + tBase) {
                     Message message = stageFile.consumePeeked();
-                    dataFileWriter.execute(() -> {
-                        dataFile.writeA(message.getA());
-                        dataFile.writeBody(message.getBody());
-                    });
+                    dataFile.writeA(message.getA());
+                    dataFile.writeBody(message.getBody());
 
                     aBuffer.add(message.getA());
+                    asBuffer.add(message.getA());
 
 //                    if (putCounter % REWRITE_SAMPLE_RATE == 0) {
 //                        logger.info("Write message to data file: " + putCounter);
@@ -190,26 +191,49 @@ public class DefaultMessageStoreImpl extends MessageStore {
                 });
                 aBuffer = new ArrayList<>(A_INDEX_BLOCK_SIZE);
             }
+            if (currentT % A_INDEX_SUB_BLOCK_SIZE == 0) {
+                List<Long> finalASBuffer = asBuffer;
+                aisIndexWriter.execute(() -> {
+                    int size = finalASBuffer.size();
+                    if (size > 1) {
+                        Collections.sort(finalASBuffer);
+                    }
+                    long[] metaIndex = new long[(size - 1) / A_INDEX_META_FACTOR + 1 + 1];
+                    for (int i = 0; i < size; i++) {
+                        long a = finalASBuffer.get(i);
+                        subIndexFile.writeA(a);
+                        if (i % A_INDEX_META_FACTOR == 0) {
+                            metaIndex[i / A_INDEX_META_FACTOR] = a;
+                        }
+                    }
+                    // Store max a in last element
+                    metaIndex[metaIndex.length - 1] = finalASBuffer.get(size - 1);
+                    subIndexFile.getMetaIndexList().add(metaIndex);
+                });
+                asBuffer = new ArrayList<>(A_INDEX_SUB_BLOCK_SIZE);
+            }
         }
-
-        while (dataFileWriter.getQueue().size() + dataFileWriter.getActiveCount() > 0) {
-            logger.info("Waiting for data file writer to finish");
-            LockSupport.parkNanos(1_000_000_000);
-        }
-        dataFileWriter.shutdown();
 
         while (aiIndexWriter.getQueue().size() + aiIndexWriter.getActiveCount() > 0) {
             logger.info("Waiting for index file writer to finish");
-            LockSupport.parkNanos(1_000_000_000);
+            LockSupport.parkNanos(10_000_000);
         }
         aiIndexWriter.shutdown();
+
+        while (aisIndexWriter.getQueue().size() + aisIndexWriter.getActiveCount() > 0) {
+            logger.info("Waiting for sub index file writer to finish");
+            LockSupport.parkNanos(10_000_000);
+        }
+        aisIndexWriter.shutdown();
 
         dataFile.flushABuffer();
         dataFile.flushBodyBuffer();
         indexFile.flushABuffer();
+        subIndexFile.flushABuffer();
 
         logger.info("Done rewrite files, msg count: " + putCounter
                 + ", index list size: " + indexFile.getMetaIndexList().size()
+                + ", sub index list size: " + subIndexFile.getMetaIndexList().size()
                 + ", discard ai: " + aBuffer.size());
     }
 
@@ -317,11 +341,11 @@ public class DefaultMessageStoreImpl extends MessageStore {
             return 0;
         }
 
-        int tStart = tMinDiff - tMinDiff % A_INDEX_BLOCK_SIZE;
+        int tStart = tMinDiff - tMinDiff % A_INDEX_SUB_BLOCK_SIZE;
         if (tMinDiff != tStart) {
-            tStart += A_INDEX_BLOCK_SIZE;
+            tStart += A_INDEX_SUB_BLOCK_SIZE;
         }
-        int tEnd = (tMaxDiff + 1) / A_INDEX_BLOCK_SIZE * A_INDEX_BLOCK_SIZE; // exclusive
+        int tEnd = (tMaxDiff + 1) / A_INDEX_SUB_BLOCK_SIZE * A_INDEX_SUB_BLOCK_SIZE; // exclusive
 //        if (avgId % AVG_SAMPLE_RATE == 0) {
 //            int blocks = (tEnd - tStart) / A_INDEX_BLOCK_SIZE;
 //            logger.info("tStart: " + tStart + ", tEnd: " + tEnd
@@ -330,28 +354,37 @@ public class DefaultMessageStoreImpl extends MessageStore {
 //        }
 //        int avgId = 0;
 
+        SumAndCount result;
+
         if (tStart >= tEnd) {
             // Back to normal
-            SumAndCount result = getAvgValueNormal(avgId, aMin, aMax, tMinDiff, tMaxDiff);
+            result = getAvgValueNormal(avgId, aMin, aMax, tMinDiff, tMaxDiff);
             sum += result.getSum();
             count += result.getCount();
 
         } else {
             // Process head
             if (tMinDiff != tStart) {
-                SumAndCount result = getAvgValueNormal(avgId, aMin, aMax, tMinDiff, tStart - 1);
+                result = getAvgValueNormal(avgId, aMin, aMax, tMinDiff, tStart - 1);
                 sum += result.getSum();
                 count += result.getCount();
             }
             // Process tail
             if (tMaxDiff > tEnd - 1) {
-                SumAndCount result = getAvgValueNormal(avgId, aMin, aMax, tEnd, tMaxDiff);
+                result = getAvgValueNormal(avgId, aMin, aMax, tEnd, tMaxDiff);
                 sum += result.getSum();
                 count += result.getCount();
             }
             // Process middle
-            for (int t = tStart; t < tEnd; t += A_INDEX_BLOCK_SIZE) {
-                SumAndCount result = getAvgValueFast(avgId, aMin, aMax, t, t + A_INDEX_BLOCK_SIZE - 1);
+            int t = tStart;
+            while (t < tEnd) {
+                if (t % A_INDEX_BLOCK_SIZE == 0 && t + A_INDEX_BLOCK_SIZE <= tEnd) {
+                    result = getAvgValueFast(avgId, aMin, aMax, t, t + A_INDEX_BLOCK_SIZE - 1, false);
+                    t += A_INDEX_BLOCK_SIZE;
+                } else {
+                    result = getAvgValueFast(avgId, aMin, aMax, t, t + A_INDEX_SUB_BLOCK_SIZE - 1, true);
+                    t += A_INDEX_SUB_BLOCK_SIZE;
+                }
                 sum += result.getSum();
                 count += result.getCount();
             }
@@ -413,7 +446,7 @@ public class DefaultMessageStoreImpl extends MessageStore {
         return new SumAndCount(sum, count);
     }
 
-    private SumAndCount getAvgValueFast(int avgId, long aMin, long aMax, int tMin, int tMax) {
+    private SumAndCount getAvgValueFast(int avgId, long aMin, long aMax, int tMin, int tMax, boolean isSub) {
 //        long avgStart = System.nanoTime();
         long sum = 0;
         int count = 0;
@@ -423,13 +456,16 @@ public class DefaultMessageStoreImpl extends MessageStore {
 //        int jump2 = 0;
 //        int jump3 = 0;
 
-        long[] metaIndex = indexFile.getMetaIndexList().get(tMin / A_INDEX_BLOCK_SIZE);
+        IndexFile theIndexFile = isSub ? subIndexFile : indexFile;
+        int blockSize = isSub ? A_INDEX_SUB_BLOCK_SIZE : A_INDEX_BLOCK_SIZE;
+
+        long[] metaIndex = theIndexFile.getMetaIndexList().get(tMin / blockSize);
         if (metaIndex[0] > aMax) {
-            fastSmallerCounter.addAndGet(A_INDEX_BLOCK_SIZE);
+//            fastSmallerCounter.addAndGet(A_INDEX_BLOCK_SIZE);
             return new SumAndCount(0, 0);
         }
         if (metaIndex[metaIndex.length - 1] < aMin) {
-            fastLargerCounter.addAndGet(A_INDEX_BLOCK_SIZE);
+//            fastLargerCounter.addAndGet(A_INDEX_BLOCK_SIZE);
             return new SumAndCount(0, 0);
         }
 
@@ -479,7 +515,7 @@ public class DefaultMessageStoreImpl extends MessageStore {
         for (long offset = startOffset; offset < endOffset; offset++) {
             if (aiByteBufferForRead.remaining() == 0) {
 //                read +=
-                indexFile.fillReadAIBuffer(aiByteBufferForRead, offset, endOffset);
+                theIndexFile.fillReadAIBuffer(aiByteBufferForRead, offset, endOffset);
             }
             long a = aiByteBufferForRead.getLong();
             if (a > aMax) {

@@ -21,13 +21,12 @@ class IndexFile {
     IndexFile() {
         RandomAccessFile aiFile;
         try {
-            aiFile = new RandomAccessFile(
-                    DATA_DIR + "ai.data", "rw");
+            aiFile = new RandomAccessFile(DATA_DIR + "ai.data", "rw");
         } catch (FileNotFoundException e) {
             throw new RuntimeException("file error");
         }
         this.aiChannel = aiFile.getChannel();
-        metaIndexList = new ArrayList<>(1024 * 1024);
+        metaIndexList = new ArrayList<>();
         aiBufferForWrite = ByteBuffer.allocateDirect(WRITE_AI_BUFFER_SIZE);
     }
 

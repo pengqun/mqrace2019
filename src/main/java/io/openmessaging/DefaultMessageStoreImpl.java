@@ -30,8 +30,8 @@ public class DefaultMessageStoreImpl extends MessageStore {
     private ThreadLocal<Integer> threadIdHolder = ThreadLocal.withInitial(() -> threadIdCounter.getAndIncrement());
     private long[] threadMinT = new long[PRODUCER_THREAD_NUM];
 
-    private List<DataFile> dataFileList = new ArrayList<>();
-
+    private List<StageFile> stageFileList = new ArrayList<>();
+    private DataFile dataFile = new DataFile();
     private IndexFile indexFile = new IndexFile();
 
     private short[] tIndex;
@@ -49,8 +49,6 @@ public class DefaultMessageStoreImpl extends MessageStore {
             -> ByteBuffer.allocateDirect(READ_AI_BUFFER_SIZE));
     private ThreadLocal<ByteBuffer> threadBufferForReadBody = ThreadLocal.withInitial(()
             -> ByteBuffer.allocateDirect(READ_BODY_BUFFER_SIZE));
-
-    private List<StageFile> stageFileList = new ArrayList<>();
 
     public DefaultMessageStoreImpl() {
         for (int i = 0; i < PRODUCER_THREAD_NUM; i++) {
@@ -104,7 +102,6 @@ public class DefaultMessageStoreImpl extends MessageStore {
 //        long rewriteStart = System.currentTimeMillis();
         int putCounter = 0;
         int currentT = 0;
-        DataFile curDataFile = null;
         List<Long> aBuffer = new ArrayList<>(A_INDEX_BLOCK_SIZE);
 
         tMaxValue = stageFileList.stream().map(StageFile::getLastT).map(t -> t + tBase)
@@ -131,16 +128,8 @@ public class DefaultMessageStoreImpl extends MessageStore {
                 while ((head = stageFile.peekMessage()) != null && head.getT() == currentT) {
                     // Got ordered message
                     Message message = stageFile.consumePeeked();
-                    if (putCounter % DATA_SEGMENT_SIZE == 0) {
-                        if (curDataFile != null) {
-                            curDataFile.flushABuffer();
-                            curDataFile.flushBodyBuffer();
-                        }
-                        curDataFile = new DataFile(putCounter);
-                        dataFileList.add(curDataFile);
-                    }
-                    curDataFile.writeA(message.getA());
-                    curDataFile.writeBody(message.getBody());
+                    dataFile.writeA(message.getA());
+                    dataFile.writeBody(message.getBody());
 
                     aBuffer.add(message.getA());
 
@@ -198,10 +187,8 @@ public class DefaultMessageStoreImpl extends MessageStore {
             }
         }
 
-        if (curDataFile != null) {
-            curDataFile.flushABuffer();
-            curDataFile.flushBodyBuffer();
-        }
+        dataFile.flushABuffer();
+        dataFile.flushBodyBuffer();
         indexFile.flushABuffer();
         logger.info("Done rewrite files, msg count1: " + putCounter
                 + ", index list size: " + indexFile.getMetaIndexList().size()
@@ -215,7 +202,7 @@ public class DefaultMessageStoreImpl extends MessageStore {
         if (getId == 0) {
             PerfStats._putEnd = System.currentTimeMillis();
             PerfStats._getStart = PerfStats._putEnd;
-            PerfStats.printStats(this);
+//            PerfStats.printStats(this);
         }
         if (getId % GET_SAMPLE_RATE == 0) {
             logger.info("getMessage - tMin: " + tMin + ", tMax: " + tMax
@@ -254,13 +241,11 @@ public class DefaultMessageStoreImpl extends MessageStore {
             int msgCount = tIndex[tDiff++];
             while (msgCount > 0) {
                 if (!aByteBufferForRead.hasRemaining()) {
-                    DataFile dataFile = dataFileList.get((int) (offset / DATA_SEGMENT_SIZE));
                     dataFile.fillReadABuffer(aByteBufferForRead, offset, endOffset);
                 }
                 long a = aByteBufferForRead.getLong();
                 if (a >= aMin && a <= aMax) {
                     if (!bodyByteBufferForRead.hasRemaining()) {
-                        DataFile dataFile = dataFileList.get((int) (offset / DATA_SEGMENT_SIZE));
                         dataFile.fillReadBodyBuffer(bodyByteBufferForRead, offset, endOffset);
                     }
                     byte[] body = new byte[BODY_BYTE_LENGTH];
@@ -381,7 +366,6 @@ public class DefaultMessageStoreImpl extends MessageStore {
             }
             while (msgCount > 0) {
                 if (aByteBufferForRead.remaining() == 0) {
-                    DataFile dataFile = dataFileList.get((int) (offset / DATA_SEGMENT_SIZE));
                     read += dataFile.fillReadABuffer(aByteBufferForRead, offset, endOffset);
                 }
                 long a = aByteBufferForRead.getLong();

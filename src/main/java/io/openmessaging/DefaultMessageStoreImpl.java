@@ -53,11 +53,11 @@ public class DefaultMessageStoreImpl extends MessageStore {
         logger.info("LsmMessageStoreImpl class loaded");
     }
 
-    private AtomicInteger putCounter = new AtomicInteger(0);
-    private AtomicInteger getCounter = new AtomicInteger(0);
-    private AtomicInteger avgCounter = new AtomicInteger(0);
+    private AtomicInteger putCounter = new AtomicInteger();
+    private AtomicInteger getCounter = new AtomicInteger();
+    private AtomicInteger avgCounter = new AtomicInteger();
 
-    private AtomicInteger threadIdCounter = new AtomicInteger(0);
+    private AtomicInteger threadIdCounter = new AtomicInteger();
     private ThreadLocal<Integer> threadIdHolder = ThreadLocal.withInitial(() -> threadIdCounter.getAndIncrement());
     private long[] threadMinT = new long[PRODUCER_THREAD_NUM];
 
@@ -109,27 +109,27 @@ public class DefaultMessageStoreImpl extends MessageStore {
     public void put(Message message) {
 //        long putStart = System.nanoTime();
         int putId = putCounter.getAndIncrement();
-//        int threadId = threadIdHolder.get();
 
-//        if (tBase < 0) {
-//            threadMinT[threadId] = message.getT();
-//            if (putId == 0) {
-//                _putStart = System.currentTimeMillis();
-//                long min = Long.MAX_VALUE;
-//                for (int i = 0; i < threadMinT.length; i++) {
-//                    while (threadMinT[i] < 0) {
-//                        LockSupport.parkNanos(1_000_000);
-//                    }
-//                    min = Math.min(min, threadMinT[i]);
-//                }
-//                tBase = min;
-//                logger.info("Determined T base: " + tBase);
-//            } else {
-//                while (tBase < 0) {
-//                    LockSupport.parkNanos(1_000_000);
-//                }
-//            }
-//        }
+        if (tBase < 0) {
+            int threadId = threadIdHolder.get();
+            threadMinT[threadId] = message.getT();
+            if (putId == 0) {
+                _putStart = System.currentTimeMillis();
+                long min = Long.MAX_VALUE;
+                for (int i = 0; i < threadMinT.length; i++) {
+                    while (threadMinT[i] < 0) {
+                        LockSupport.parkNanos(1_000_000);
+                    }
+                    min = Math.min(min, threadMinT[i]);
+                }
+                tBase = min;
+                logger.info("Determined T base: " + tBase);
+            } else {
+                while (tBase < 0) {
+                    LockSupport.parkNanos(1_000_000);
+                }
+            }
+        }
 
         if (putId == 20000 * 10000) {
             throw new RuntimeException("" + (System.currentTimeMillis() - _putStart));
@@ -798,20 +798,20 @@ public class DefaultMessageStoreImpl extends MessageStore {
     private static final int GET_SAMPLE_RATE = 1000;
     private static final int AVG_SAMPLE_RATE = 1000;
 
-    private AtomicLong getMsgCounter = new AtomicLong(0);
-    private AtomicLong avgMsgCounter = new AtomicLong(0);
+    private AtomicLong getMsgCounter = new AtomicLong();
+    private AtomicLong avgMsgCounter = new AtomicLong();
 
-    private AtomicInteger readACounter  = new AtomicInteger(0);
-    private AtomicInteger usedACounter  = new AtomicInteger(0);
-    private AtomicInteger skipACounter = new AtomicInteger(0);
-    private AtomicInteger readAICounter  = new AtomicInteger(0);
-    private AtomicInteger usedAICounter  = new AtomicInteger(0);
-    private AtomicInteger skipAICounter  = new AtomicInteger(0);
-    private AtomicInteger jump1AICounter  = new AtomicInteger(0);
-    private AtomicInteger jump2AICounter  = new AtomicInteger(0);
-    private AtomicInteger jump3AICounter  = new AtomicInteger(0);
-    private AtomicInteger fastSmallerCounter = new AtomicInteger(0);
-    private AtomicInteger fastLargerCounter = new AtomicInteger(0);
+    private AtomicInteger readACounter  = new AtomicInteger();
+    private AtomicInteger usedACounter  = new AtomicInteger();
+    private AtomicInteger skipACounter = new AtomicInteger();
+    private AtomicInteger readAICounter  = new AtomicInteger();
+    private AtomicInteger usedAICounter  = new AtomicInteger();
+    private AtomicInteger skipAICounter  = new AtomicInteger();
+    private AtomicInteger jump1AICounter  = new AtomicInteger();
+    private AtomicInteger jump2AICounter  = new AtomicInteger();
+    private AtomicInteger jump3AICounter  = new AtomicInteger();
+    private AtomicInteger fastSmallerCounter = new AtomicInteger();
+    private AtomicInteger fastLargerCounter = new AtomicInteger();
 
     private long _putStart = 0;
     private long _putEnd = 0;

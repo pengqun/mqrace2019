@@ -48,7 +48,7 @@ class CommonUtils {
         }
     }
 
-    static ThreadLocal<ByteBuffer> createBuffer(int size) {
+    static ThreadLocal<ByteBuffer> createDirectBuffer(int size) {
         return ThreadLocal.withInitial(() -> ByteBuffer.allocateDirect(size));
     }
 }

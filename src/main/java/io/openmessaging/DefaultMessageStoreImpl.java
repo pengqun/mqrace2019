@@ -8,7 +8,7 @@ import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
-import static io.openmessaging.CommonUtils.createBuffer;
+import static io.openmessaging.CommonUtils.createDirectBuffer;
 import static io.openmessaging.Constants.*;
 import static io.openmessaging.PerfStats.*;
 
@@ -48,10 +48,10 @@ public class DefaultMessageStoreImpl extends MessageStore {
     private DataFile dataFile = new DataFile();
     private IndexFile indexFile = new IndexFile();
 
-    private ThreadLocal<ByteBuffer> threadBufferForReadA1 = createBuffer(READ_A1_BUFFER_SIZE);
-    private ThreadLocal<ByteBuffer> threadBufferForReadA2 = createBuffer(READ_A2_BUFFER_SIZE);
-    private ThreadLocal<ByteBuffer> threadBufferForReadAI = createBuffer(READ_AI_BUFFER_SIZE);
-    private ThreadLocal<ByteBuffer> threadBufferForReadBody = createBuffer(READ_BODY_BUFFER_SIZE);
+    private ThreadLocal<ByteBuffer> threadBufferForReadA1 = createDirectBuffer(READ_A1_BUFFER_SIZE);
+    private ThreadLocal<ByteBuffer> threadBufferForReadA2 = createDirectBuffer(READ_A2_BUFFER_SIZE);
+    private ThreadLocal<ByteBuffer> threadBufferForReadAI = createDirectBuffer(READ_AI_BUFFER_SIZE);
+    private ThreadLocal<ByteBuffer> threadBufferForReadBody = createDirectBuffer(READ_BODY_BUFFER_SIZE);
 
     public DefaultMessageStoreImpl() {
         Arrays.fill(threadMinT, -1);
@@ -59,7 +59,7 @@ public class DefaultMessageStoreImpl extends MessageStore {
 
     @Override
     public void put(Message message) {
-        long putStart = System.nanoTime();
+//        long putStart = System.nanoTime();
         int putId = putCounter.getAndIncrement();
 
         if (tBase < 0) {
@@ -82,16 +82,16 @@ public class DefaultMessageStoreImpl extends MessageStore {
             }
         }
 
-//        if (putId == 20000 * 10000) {
-//            throw new RuntimeException("" + (System.currentTimeMillis() - PerfStats._putStart));
-//        }
-
-        threadStageFile.get().writeMessage(message);
-
-        if (putId % PUT_SAMPLE_RATE == 0) {
-            logger.info("Write message to stage file with t: " + message.getT() + ", a: " + message.getA()
-                    + ", time: " + (System.nanoTime() - putStart) + ", putId: " + putId);
+        if (putId == 20000 * 10000) {
+            throw new RuntimeException("" + (System.currentTimeMillis() - PerfStats._putStart));
         }
+
+//        threadStageFile.get().writeMessage(message);
+//
+//        if (putId % PUT_SAMPLE_RATE == 0) {
+//            logger.info("Write message to stage file with t: " + message.getT() + ", a: " + message.getA()
+//                    + ", time: " + (System.nanoTime() - putStart) + ", putId: " + putId);
+//        }
     }
 
     private void rewriteFiles() {
@@ -133,9 +133,9 @@ public class DefaultMessageStoreImpl extends MessageStore {
 //                    if (putCounter % REWRITE_SAMPLE_RATE == 0) {
 //                        logger.info("Write message to data file: " + putCounter);
 //                    }
-//                    if (putCounter == 200_000_000) {
-//                        throw new RuntimeException("" + (System.currentTimeMillis() - rewriteStart) + ", " + putCounter);
-//                    }
+                    if (putCounter == 200_000_000) {
+                        throw new RuntimeException("" + (System.currentTimeMillis() - rewriteStart) + ", " + putCounter);
+                    }
                     putCounter++;
                     writeCount++;
                 }

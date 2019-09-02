@@ -32,6 +32,7 @@ public class DefaultMessageStoreImpl extends MessageStore {
     private AtomicInteger threadIdCounter = new AtomicInteger();
     private ThreadLocal<Integer> threadIdHolder = ThreadLocal.withInitial(() -> threadIdCounter.getAndIncrement());
     private long[] threadMinT = new long[PRODUCER_THREAD_NUM];
+    private long[] threadMaxT = new long[PRODUCER_THREAD_NUM];
 
     private short[] tIndex = null;
     private int[] tIndexSummary = null;
@@ -60,6 +61,7 @@ public class DefaultMessageStoreImpl extends MessageStore {
             stageFileList[i] = stageFile;
         }
         Arrays.fill(threadMinT, -1);
+        Arrays.fill(threadMaxT, -1);
     }
 
     @Override
@@ -92,6 +94,8 @@ public class DefaultMessageStoreImpl extends MessageStore {
 //        }
         stageFileList[threadId].writeMessage(message);
 
+        threadMaxT[threadId] = message.getT();
+
         if (putId % PUT_SAMPLE_RATE == 0) {
             logger.info("Write message to stage file with t: " + message.getT() + ", a: " + message.getA()
                     + ", time: " + (System.nanoTime() - putStart) + ", putId: " + putId);
@@ -107,8 +111,22 @@ public class DefaultMessageStoreImpl extends MessageStore {
         List<Long> asBuffer = new ArrayList<>(A_INDEX_SUB_BLOCK_SIZE);
         AtomicInteger pendingTasks = new AtomicInteger();
 
-        tMaxValue = Arrays.stream(stageFileList).mapToLong(StageFile::getLastT).max().orElse(0);
+        for (StageFile stageFile : stageFileList) {
+            long lastT = stageFile.getLastT();
+            logger.info("Got lastT: " + lastT);
+            tMaxValue = Math.max(tMaxValue, lastT);
+        }
         logger.info("Determined t max value: " + tMaxValue);
+
+        long anotherMax = Arrays.stream(stageFileList).mapToLong(StageFile::getLastT).max().orElse(0);
+        if (anotherMax != tMaxValue) {
+            logger.info("Unmatched t max value: " + anotherMax);
+        }
+
+        long yetAnotherMax = Arrays.stream(threadMaxT).max().orElse(tMaxValue);
+        if (yetAnotherMax != tMaxValue) {
+            logger.info("Unmatched t max value 2: " + yetAnotherMax);
+        }
 
         tIndex = new short[(int) (tMaxValue - tBase + 1)];
         tIndexSummary = new int[tIndex.length / T_INDEX_SUMMARY_FACTOR + 1];

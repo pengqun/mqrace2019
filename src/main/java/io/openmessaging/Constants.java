@@ -12,7 +12,7 @@ class Constants {
     static final int BODY_BYTE_LENGTH = 34;
     static final int MSG_BYTE_LENGTH = 43;
 
-    static final int T_INDEX_SUMMARY_FACTOR = 32;
+    static final int T_INDEX_SUMMARY_FACTOR = 64;
 
     static final int A_INDEX_BLOCK_SIZE = 1024 * 4;
     static final int A_INDEX_SUB_BLOCK_SIZE = 1024 * 2;

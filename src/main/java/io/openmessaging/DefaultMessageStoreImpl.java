@@ -268,7 +268,8 @@ public class DefaultMessageStoreImpl extends MessageStore {
                         try {
                             rewriteFiles();
                         } catch (Throwable e) {
-                            logger.error("Failed to rewrite files: " + e.getMessage());
+                            logger.info("Failed to rewrite files: " + e.getClass().getSimpleName() + " - " + e.getMessage());
+                            throw e;
                         }
                     }
                     rewriteDone = true;

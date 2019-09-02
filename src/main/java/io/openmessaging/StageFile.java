@@ -15,8 +15,8 @@ import static io.openmessaging.Constants.*;
  */
 class StageFile {
     private FileChannel fileChannel;
-    private ByteBuffer byteBufferForWrite;
-    private ByteBuffer byteBufferForRead;
+    private ByteBuffer byteBufferForWrite = ByteBuffer.allocateDirect(WRITE_STAGE_BUFFER_SIZE);
+    private ByteBuffer byteBufferForRead = ByteBuffer.allocateDirect(READ_STAGE_BUFFER_SIZE);
     private long readOffset;
     private Message peeked;
     private boolean doneRead;
@@ -25,7 +25,7 @@ class StageFile {
     private long prevT = 0;
     private int overflowIndex = 0;
     private List<Long> overflowList = new ArrayList<>();
-    private byte[] body = new byte[BODY_BYTE_LENGTH];
+    private byte[] bodyContainer = new byte[BODY_BYTE_LENGTH];
 
     StageFile(int index) {
         RandomAccessFile raf;
@@ -35,8 +35,6 @@ class StageFile {
             throw new RuntimeException("no file");
         }
         this.fileChannel = raf.getChannel();
-        this.byteBufferForWrite = ByteBuffer.allocateDirect(WRITE_STAGE_BUFFER_SIZE);
-        this.byteBufferForRead = ByteBuffer.allocateDirect(READ_STAGE_BUFFER_SIZE);
     }
 
     void writeMessage(Message message) {
@@ -102,9 +100,9 @@ class StageFile {
         long t = prevT + tDiff;
         prevT = t;
         long a = byteBufferForRead.getLong();
-        byteBufferForRead.get(body);
+        byteBufferForRead.get(bodyContainer);
 
-        peeked = new Message(a, t, body);
+        peeked = new Message(a, t, bodyContainer);
         return peeked;
     }
 

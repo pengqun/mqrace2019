@@ -16,8 +16,10 @@ import static io.openmessaging.Constants.*;
 class IndexFile {
     private static int index = 0;
     private FileChannel aiChannel;
-    private List<long[]> metaIndexList;
-    private ByteBuffer aiBufferForWrite;
+    private List<long[]> metaIndexList = new ArrayList<>();
+    private List<Long> rangeMaxList = new ArrayList<>();
+    private List<Long> rangeSumList = new ArrayList<>();
+    private ByteBuffer aiBufferForWrite = ByteBuffer.allocateDirect(WRITE_AI_BUFFER_SIZE);
 
     IndexFile() {
         RandomAccessFile aiFile;
@@ -27,8 +29,6 @@ class IndexFile {
             throw new RuntimeException("file error");
         }
         this.aiChannel = aiFile.getChannel();
-        this.metaIndexList = new ArrayList<>();
-        this.aiBufferForWrite = ByteBuffer.allocateDirect(WRITE_AI_BUFFER_SIZE);
     }
 
     void writeA(long a) {
@@ -43,7 +43,27 @@ class IndexFile {
         return fillReadBuffer(readAIBuffer, aiChannel, offset, endOffset, KEY_A_BYTE_LENGTH);
     }
 
-    List<long[]> getMetaIndexList() {
-        return metaIndexList;
+    void addMetaIndex(long[] metaIndex) {
+        metaIndexList.add(metaIndex);
+    }
+
+    long[] getMetaIndex(int index) {
+        return metaIndexList.get(index);
+    }
+
+    long getRangeMax(int index) {
+        return rangeMaxList.get(index);
+    }
+
+    void addRangeMax(long rangeMax) {
+        rangeMaxList.add(rangeMax);
+    }
+
+    long getRangeSum(int index) {
+        return rangeSumList.get(index);
+    }
+
+    void addRangeSum(long rangeSum) {
+        rangeSumList.add(rangeSum);
     }
 }

@@ -33,7 +33,7 @@ public class DemoTester {
         // 每次查询求平均的最大跨度
         int maxValueCheckSize = 100000;
 
-        Runtime.getRuntime().exec(new String[]{"bash", "-c", "rm -rf /tmp/*.data"});
+        Runtime.getRuntime().exec(new String[]{"bash", "-c", "rm -rf /tmp/*.data"}).waitFor();
 
         MessageStore messageStore = null;
 

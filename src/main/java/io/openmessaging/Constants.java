@@ -5,8 +5,8 @@ package io.openmessaging;
  */
 class Constants {
 
-//    static final String DATA_DIR = "/alidata1/race2019/data/"; static final int TEST_BOUNDARY = 37000; static final int PRODUCER_THREAD_NUM = 12;
-    static final String DATA_DIR = "/tmp/"; static final int TEST_BOUNDARY = 9000; static final int PRODUCER_THREAD_NUM = 10;
+    static final String DATA_DIR = "/alidata1/race2019/data/"; static final int TEST_BOUNDARY = 37000; static final int PRODUCER_THREAD_NUM = 12;
+//    static final String DATA_DIR = "/tmp/"; static final int TEST_BOUNDARY = 9000; static final int PRODUCER_THREAD_NUM = 10;
 
     static final int KEY_A_BYTE_LENGTH = 8;
     static final int BODY_BYTE_LENGTH = 34;
@@ -26,7 +26,8 @@ class Constants {
     static final int READ_A2_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024 * 16;
 
     static final int WRITE_AI_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024 * 2;
-    static final int READ_AI_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024 * 16;
+    static final int READ_AI_BUFFER_SIZE = KEY_A_BYTE_LENGTH * A_INDEX_META_FACTOR;
+    static final int READ_AIS_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024 * 16;
 
     static final int WRITE_BODY_BUFFER_SIZE = BODY_BYTE_LENGTH * 1024 * 2;
     static final int READ_BODY_BUFFER_SIZE = BODY_BYTE_LENGTH * 256;

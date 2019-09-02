@@ -41,7 +41,7 @@ public class DefaultMessageStoreImpl extends MessageStore {
     private long tMaxValue = Long.MIN_VALUE;
     private volatile boolean rewriteDone = false;
 
-    private List<StageFile> stageFileList = new ArrayList<>();
+    private List<StageFile> stageFileList = Collections.synchronizedList(new ArrayList<>());
     private ThreadLocal<StageFile> threadStageFile = ThreadLocal.withInitial(() -> {
         StageFile stageFile = new StageFile(threadIdHolder.get());
         stageFileList.add(stageFile);
@@ -318,7 +318,7 @@ public class DefaultMessageStoreImpl extends MessageStore {
     @Override
     public long getAvgValue(long aMin, long aMax, long tMin, long tMax) {
 //        long avgStart = System.currentTimeMillis();
-//        int avgId = avgCounter.getAndIncrement();
+        int avgId = avgCounter.getAndIncrement();
 //        if (avgId == 0) {
 //            PerfStats._getEnd = System.currentTimeMillis();
 //            PerfStats._avgStart = PerfStats._getEnd;
@@ -327,10 +327,9 @@ public class DefaultMessageStoreImpl extends MessageStore {
 //            logger.info("getAvgValue - tMin: " + tMin + ", tMax: " + tMax + ", aMin: " + aMin + ", aMax: " + aMax
 //                    + ", tRange: " + (tMax - tMin) + ", avgId: " + avgId);
 //        }
-//        if (avgId == TEST_BOUNDARY) {
-//            PerfStats.printStats(this);
-//        }
-        int avgId = 0;
+        if (avgId == TEST_BOUNDARY) {
+            PerfStats.printStats(this);
+        }
 
         long sum = 0;
         int count = 0;

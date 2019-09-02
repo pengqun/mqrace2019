@@ -329,18 +329,18 @@ public class DefaultMessageStoreImpl extends MessageStore {
     @Override
     public long getAvgValue(long aMin, long aMax, long tMin, long tMax) {
 //        long avgStart = System.currentTimeMillis();
-//        int avgId = avgCounter.getAndIncrement();
-//        if (avgId == 0) {
-//            PerfStats._getEnd = System.currentTimeMillis();
-//            PerfStats._avgStart = PerfStats._getEnd;
-//        }
+        int avgId = avgCounter.getAndIncrement();
+        if (avgId == 0) {
+            PerfStats._getEnd = System.currentTimeMillis();
+            PerfStats._avgStart = PerfStats._getEnd;
+        }
 //        if (avgId % AVG_SAMPLE_RATE == 0) {
 //            logger.info("getAvgValue - tMin: " + tMin + ", tMax: " + tMax + ", aMin: " + aMin + ", aMax: " + aMax
 //                    + ", tRange: " + (tMax - tMin) + ", avgId: " + avgId);
 //        }
-//        if (avgId == TEST_BOUNDARY) {
-//            PerfStats.printStats(this);
-//        }
+        if (avgId == TEST_BOUNDARY) {
+            PerfStats.printStats(this);
+        }
         long sum = 0;
         int count = 0;
 
@@ -397,7 +397,7 @@ public class DefaultMessageStoreImpl extends MessageStore {
 //        if (avgId % AVG_SAMPLE_RATE == 0) {
 //            logger.info("Got " + count + ", time: " + (System.currentTimeMillis() - avgStart) + ", avgId: " + avgId);
 //        }
-//        avgMsgCounter.addAndGet(count);
+        avgMsgCounter.addAndGet(count);
 
         return count > 0 ? sum / count : 0;
     }

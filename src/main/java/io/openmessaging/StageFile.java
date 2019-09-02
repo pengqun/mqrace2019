@@ -80,10 +80,6 @@ class StageFile {
         }
     }
 
-    int overflowSize() {
-        return overflowList.size();
-    }
-
     void prepareForRead() {
         byteBufferForRead.flip();
     }

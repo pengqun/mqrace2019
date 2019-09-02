@@ -262,6 +262,7 @@ public class DefaultMessageStoreImpl extends MessageStore {
                         for (StageFile stageFile : stageFileList) {
                             stageFile.flushBuffer();
                             totalSize += stageFile.fileSize();
+                            logger.info("overflow size: " + stageFile.overflowSize());
                         }
                         logger.info("Flushed all stage files, total size: " + totalSize);
                         rewriting = true;

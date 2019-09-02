@@ -75,6 +75,10 @@ class StageFile {
         }
     }
 
+    int overflowSize() {
+        return overflowList.size();
+    }
+
     void prepareForRead() {
         byteBufferForRead.flip();
     }
@@ -90,6 +94,9 @@ class StageFile {
         }
         long tDiff = byteBufferForRead.get() & 0xff;
         if (tDiff == 255) {
+            if (overflowIndex >= overflowList.size()) {
+                throw new RuntimeException("overflow: " + overflowList.size() + ", index: " + overflowIndex);
+            }
             tDiff = overflowList.get(overflowIndex++);
         }
         long t = prevT + tDiff;

@@ -40,6 +40,7 @@ public class DefaultMessageStoreImpl extends MessageStore {
     private volatile long tBase = -1;
     private long tMaxValue = Long.MIN_VALUE;
     private volatile boolean rewriteDone = false;
+    private volatile boolean rewriting = false;
 
     private List<StageFile> stageFileList = Collections.synchronizedList(new ArrayList<>());
     private ThreadLocal<StageFile> threadStageFile = ThreadLocal.withInitial(() -> {
@@ -231,6 +232,9 @@ public class DefaultMessageStoreImpl extends MessageStore {
         indexFile.flushABuffer();
         subIndexFile.flushABuffer();
 
+        stageFileList = null;
+        System.gc();
+
         logger.info("Done rewrite files, msg count: " + putCounter
                 + ", index list size: " + indexFile.getMetaIndexList().size()
                 + ", sub index list size: " + subIndexFile.getMetaIndexList().size()
@@ -239,28 +243,34 @@ public class DefaultMessageStoreImpl extends MessageStore {
 
     @Override
     public List<Message> getMessage(long aMin, long aMax, long tMin, long tMax) {
-//        long getStart = System.currentTimeMillis();
-//        int getId = getCounter.getAndIncrement();
-//        if (getId == 0) {
-//            PerfStats._putEnd = System.currentTimeMillis();
-//            PerfStats._getStart = PerfStats._putEnd;
+        long getStart = System.currentTimeMillis();
+        int getId = getCounter.getAndIncrement();
+        if (getId == 0) {
+            PerfStats._putEnd = System.currentTimeMillis();
+            PerfStats._getStart = PerfStats._putEnd;
 //            PerfStats.printStats(this);
-//        }
-//        if (getId % GET_SAMPLE_RATE == 0) {
-//            logger.info("getMessage - tMin: " + tMin + ", tMax: " + tMax
-//                    + ", aMin: " + aMin + ", aMax: " + aMax + ", getId: " + getId);
-//        }
+        }
+        if (getId % GET_SAMPLE_RATE == 0) {
+            logger.info("getMessage - tMin: " + tMin + ", tMax: " + tMax
+                    + ", aMin: " + aMin + ", aMax: " + aMax + ", getId: " + getId);
+        }
         if (!rewriteDone) {
             synchronized (this) {
                 if (!rewriteDone) {
-                    long totalSize = 0;
-                    for (StageFile stageFile : stageFileList) {
-                        stageFile.flushBuffer();
-                        totalSize += stageFile.fileSize();
+                    if (!rewriting) {
+                        long totalSize = 0;
+                        for (StageFile stageFile : stageFileList) {
+                            stageFile.flushBuffer();
+                            totalSize += stageFile.fileSize();
+                        }
+                        logger.info("Flushed all stage files, total size: " + totalSize);
+                        rewriting = true;
+                        try {
+                            rewriteFiles();
+                        } catch (Throwable e) {
+                            logger.error("Failed to rewrite files: " + e.getMessage());
+                        }
                     }
-                    logger.info("Flushed all stage files, total size: " + totalSize);
-
-                    rewriteFiles();
                     rewriteDone = true;
                 }
                 logger.info("Rewrite task has finished, time: " + (System.currentTimeMillis() - _getStart));
@@ -306,27 +316,27 @@ public class DefaultMessageStoreImpl extends MessageStore {
         aByteBufferForRead.clear();
         bodyByteBufferForRead.clear();
 
-//        getMsgCounter.addAndGet(result.size());
-//
-//        if (getId % GET_SAMPLE_RATE == 0) {
-//            logger.info("Return sorted result with size: " + result.size()
-//                    + ", time: " + (System.currentTimeMillis() - getStart) + ", getId: " + getId);
-//        }
+        getMsgCounter.addAndGet(result.size());
+
+        if (getId % GET_SAMPLE_RATE == 0) {
+            logger.info("Return sorted result with size: " + result.size()
+                    + ", time: " + (System.currentTimeMillis() - getStart) + ", getId: " + getId);
+        }
         return result;
     }
 
     @Override
     public long getAvgValue(long aMin, long aMax, long tMin, long tMax) {
-//        long avgStart = System.currentTimeMillis();
+        long avgStart = System.currentTimeMillis();
         int avgId = avgCounter.getAndIncrement();
-//        if (avgId == 0) {
-//            PerfStats._getEnd = System.currentTimeMillis();
-//            PerfStats._avgStart = PerfStats._getEnd;
-//        }
-//        if (avgId % AVG_SAMPLE_RATE == 0) {
-//            logger.info("getAvgValue - tMin: " + tMin + ", tMax: " + tMax + ", aMin: " + aMin + ", aMax: " + aMax
-//                    + ", tRange: " + (tMax - tMin) + ", avgId: " + avgId);
-//        }
+        if (avgId == 0) {
+            PerfStats._getEnd = System.currentTimeMillis();
+            PerfStats._avgStart = PerfStats._getEnd;
+        }
+        if (avgId % AVG_SAMPLE_RATE == 0) {
+            logger.info("getAvgValue - tMin: " + tMin + ", tMax: " + tMax + ", aMin: " + aMin + ", aMax: " + aMax
+                    + ", tRange: " + (tMax - tMin) + ", avgId: " + avgId);
+        }
         if (avgId == TEST_BOUNDARY) {
             PerfStats.printStats(this);
         }
@@ -389,10 +399,10 @@ public class DefaultMessageStoreImpl extends MessageStore {
             }
         }
 
-//        if (avgId % AVG_SAMPLE_RATE == 0) {
-//            logger.info("Got " + count + ", time: " + (System.currentTimeMillis() - avgStart) + ", avgId: " + avgId);
-//        }
-//        avgMsgCounter.addAndGet(count);
+        if (avgId % AVG_SAMPLE_RATE == 0) {
+            logger.info("Got " + count + ", time: " + (System.currentTimeMillis() - avgStart) + ", avgId: " + avgId);
+        }
+        avgMsgCounter.addAndGet(count);
 
         return count > 0 ? sum / count : 0;
     }

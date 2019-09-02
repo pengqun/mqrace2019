@@ -382,11 +382,11 @@ public class DefaultMessageStoreImpl extends MessageStore {
             int t = tStart;
             while (t < tEnd) {
                 if (t % A_INDEX_MAIN_BLOCK_SIZE == 0 && t + A_INDEX_MAIN_BLOCK_SIZE <= tEnd) {
-                    result = getAvgFromSortedIndex(aMin, aMax, t, t + A_INDEX_MAIN_BLOCK_SIZE - 1);
-//                    result = getAvgValueFromAccumIndex(aMin, aMax, t, t + A_INDEX_MAIN_BLOCK_SIZE - 1);
+                    result = getAvgFromSortedIndex(aMin, aMax, t, t + A_INDEX_MAIN_BLOCK_SIZE - 1, true);
+//                    result = getAvgValueFromAccumIndex(aMin, aMax, t, t + A_INDEX_MAIN_BLOCK_SIZE - 1, true);
                     t += A_INDEX_MAIN_BLOCK_SIZE;
                 } else {
-                    result = getAvgFromSortedIndex(aMin, aMax, t, t + A_INDEX_SUB_BLOCK_SIZE - 1);
+                    result = getAvgFromSortedIndex(aMin, aMax, t, t + A_INDEX_SUB_BLOCK_SIZE - 1, false);
                     t += A_INDEX_SUB_BLOCK_SIZE;
                 }
                 sum += result.getSum();
@@ -435,13 +435,13 @@ public class DefaultMessageStoreImpl extends MessageStore {
         return new SumAndCount(sum, count);
     }
 
-    private SumAndCount getAvgFromSortedIndex(long aMin, long aMax, int tMin, int tMax) {
+    private SumAndCount getAvgFromSortedIndex(long aMin, long aMax, int tMin, int tMax, boolean isMain) {
         long sum = 0;
         int count = 0;
 
-        IndexFile indexFile = subIndexFile;
-        int blockSize = A_INDEX_SUB_BLOCK_SIZE;
-        ByteBuffer aiByteBufferForRead = threadBufferForReadAIS.get();
+        IndexFile indexFile = isMain ? mainIndexFile : subIndexFile;
+        int blockSize = isMain ? A_INDEX_MAIN_BLOCK_SIZE : A_INDEX_SUB_BLOCK_SIZE;
+        ByteBuffer aiByteBufferForRead = isMain ? threadBufferForReadAIM.get() : threadBufferForReadAIS.get();
 
         long[] metaIndex = indexFile.getMetaIndex(tMin / blockSize);
         long rangeMin = metaIndex[0];
@@ -512,13 +512,13 @@ public class DefaultMessageStoreImpl extends MessageStore {
         return new SumAndCount(sum, count);
     }
 
-    private SumAndCount getAvgValueFromAccumIndex(long aMin, long aMax, int tMin, int tMax) {
+    private SumAndCount getAvgValueFromAccumIndex(long aMin, long aMax, int tMin, int tMax, boolean isMain) {
         long sum;
         int count;
 
-        IndexFile indexFile = mainIndexFile;
-        int blockSize = A_INDEX_MAIN_BLOCK_SIZE;
-        ByteBuffer aiByteBufferForRead = threadBufferForReadAIM.get();
+        IndexFile indexFile = isMain ? mainIndexFile : subIndexFile;
+        int blockSize = isMain ? A_INDEX_MAIN_BLOCK_SIZE : A_INDEX_SUB_BLOCK_SIZE;
+        ByteBuffer aiByteBufferForRead = isMain ? threadBufferForReadAIM.get() : threadBufferForReadAIS.get();
 
         long[] metaIndex = indexFile.getMetaIndex(tMin / blockSize);
         long rangeMin = metaIndex[0];

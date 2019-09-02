@@ -114,17 +114,15 @@ public class DefaultMessageStoreImpl extends MessageStore {
         tIndexSummary = new int[tIndex.length / T_INDEX_SUMMARY_FACTOR + 1];
         logger.info("Created t index and summary with length: " + tIndex.length);
 
-        List<StageFile> readingFiles = new ArrayList<>(Arrays.asList(stageFileList));
-        readingFiles.forEach(StageFile::prepareForRead);
+        Arrays.stream(stageFileList).forEach(StageFile::prepareForRead);
 
         while (true) {
             int repeatCount = 0;
-            Iterator<StageFile> iterator = readingFiles.iterator();
-
-            while (iterator.hasNext()) {
-                StageFile stageFile = iterator.next();
+            int doneCount = 0;
+            for (StageFile stageFile : stageFileList) {
                 if (stageFile.isDoneRead()) {
-                    iterator.remove();
+                    doneCount++;
+                    continue;
                 }
                 Message head;
                 while ((head = stageFile.peekMessage()) != null && head.getT() == currentT + tBase) {
@@ -146,7 +144,8 @@ public class DefaultMessageStoreImpl extends MessageStore {
                 }
             }
 
-            if (readingFiles.isEmpty()) {
+            if (doneCount == stageFileList.length) {
+                logger.info("All stage files have been read");
                 break;
             }
 
@@ -228,6 +227,13 @@ public class DefaultMessageStoreImpl extends MessageStore {
         dataFile.flushBodyBuffer();
         mainIndexFile.flushABuffer();
         subIndexFile.flushABuffer();
+
+        for (StageFile stageFile : stageFileList) {
+            logger.info("write: " + stageFile.fileSize() / STAGE_MSG_BYTE_LENGTH
+                    + ", read: " + stageFile.getReadCount()
+                    + ", offset: " + stageFile.getReadOffset() / STAGE_MSG_BYTE_LENGTH
+                    + ", consumed: " + stageFile.getConsumeCount());
+        }
         stageFileList = null;
         System.gc();
         logger.info("Done rewrite files, rewrite count: " + rewriteCount
@@ -268,6 +274,7 @@ public class DefaultMessageStoreImpl extends MessageStore {
                         throw e;
                     }
                     if (rewriteCount != putCounter.get() || rewriteCount != totalSize / STAGE_MSG_BYTE_LENGTH) {
+                        logger.info("Inconsistent msg count");
                         throw new RuntimeException("Inconsistent msg count");
                     }
                     rewriteDone = true;

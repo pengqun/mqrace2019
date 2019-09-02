@@ -28,6 +28,9 @@ class StageFile {
     private byte[] bodyContainer = new byte[BODY_BYTE_LENGTH];
     private boolean doneRead = false;
 
+    private int readCount = 0;
+    private int consumeCount = 0;
+
     StageFile(int index) {
         RandomAccessFile raf;
         try {
@@ -103,6 +106,8 @@ class StageFile {
         long a = byteBufferForRead.getLong();
         byteBufferForRead.get(bodyContainer);
 
+        readCount++;
+
         peeked = new Message(a, t, bodyContainer);
         return peeked;
     }
@@ -110,6 +115,7 @@ class StageFile {
     Message consumePeeked() {
         Message consumed = peeked;
         peeked = null;
+        consumeCount++;
         return consumed;
     }
 
@@ -132,5 +138,17 @@ class StageFile {
 
     boolean isDoneRead() {
         return doneRead;
+    }
+
+    public long getReadOffset() {
+        return readOffset;
+    }
+
+    public int getReadCount() {
+        return readCount;
+    }
+
+    public int getConsumeCount() {
+        return consumeCount;
     }
 }

@@ -39,8 +39,8 @@ class IndexFile {
         flushBuffer(aiBufferForWrite, aiChannel);
     }
 
-    int fillReadAIBuffer(ByteBuffer readAIBuffer, long offset, long endOffset) {
-        return fillReadBuffer(readAIBuffer, aiChannel, offset, endOffset, KEY_A_BYTE_LENGTH);
+    void fillReadAIBuffer(ByteBuffer readAIBuffer, long offset, long endOffset) {
+        fillReadBuffer(readAIBuffer, aiChannel, offset, endOffset, KEY_A_BYTE_LENGTH);
     }
 
     void addMetaIndex(long[] metaIndex) {

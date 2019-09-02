@@ -33,16 +33,15 @@ class CommonUtils {
         byteBuffer.clear();
     }
 
-    static int fillReadBuffer(ByteBuffer readBuffer, FileChannel fileChannel,
+    static void fillReadBuffer(ByteBuffer readBuffer, FileChannel fileChannel,
                                long offset, long endOffset, int elemSize) {
         try {
             readBuffer.clear();
             if ((endOffset - offset) * elemSize < readBuffer.capacity()) {
                 readBuffer.limit((int) (endOffset - offset) * elemSize);
             }
-            int readBytes = fileChannel.read(readBuffer, offset * elemSize);
+            fileChannel.read(readBuffer, offset * elemSize);
             readBuffer.flip();
-            return readBytes;
         } catch (IOException e) {
             throw new RuntimeException("read error");
         }

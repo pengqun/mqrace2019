@@ -17,15 +17,16 @@ class StageFile {
     private FileChannel fileChannel;
     private ByteBuffer byteBufferForWrite = ByteBuffer.allocateDirect(WRITE_STAGE_BUFFER_SIZE);
     private ByteBuffer byteBufferForRead = ByteBuffer.allocateDirect(READ_STAGE_BUFFER_SIZE);
-    private long readOffset;
-    private Message peeked;
-    private boolean doneRead;
 
     private long lastT = 0;
     private long prevT = 0;
     private int overflowIndex = 0;
     private List<Long> overflowList = new ArrayList<>();
+
+    private long readOffset = 0;
+    private Message peeked = null;
     private byte[] bodyContainer = new byte[BODY_BYTE_LENGTH];
+    private boolean doneRead = false;
 
     StageFile(int index) {
         RandomAccessFile raf;

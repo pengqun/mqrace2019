@@ -46,8 +46,8 @@ class DataFile {
         flushBuffer(bodyBufferForWrite, bodyChannel);
     }
 
-    int fillReadABuffer(ByteBuffer readABuffer, long offset, long endOffset) {
-        return fillReadBuffer(readABuffer, aChannel, offset, endOffset, KEY_A_BYTE_LENGTH);
+    void fillReadABuffer(ByteBuffer readABuffer, long offset, long endOffset) {
+        fillReadBuffer(readABuffer, aChannel, offset, endOffset, KEY_A_BYTE_LENGTH);
     }
 
     void fillReadBodyBuffer(ByteBuffer readBodyBuffer, long offset, long endOffset) {

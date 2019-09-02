@@ -8,7 +8,6 @@ import java.util.concurrent.atomic.AtomicLong;
  * @author pengqun.pq
  */
 class PerfStats {
-
     private static final Logger logger = Logger.getLogger(PerfStats.class);
 
     static final int PUT_SAMPLE_RATE = 100000000;

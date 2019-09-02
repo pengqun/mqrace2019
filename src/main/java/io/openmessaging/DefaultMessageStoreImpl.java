@@ -33,8 +33,8 @@ public class DefaultMessageStoreImpl extends MessageStore {
     private ThreadLocal<Integer> threadIdHolder = ThreadLocal.withInitial(() -> threadIdCounter.getAndIncrement());
     private long[] threadMinT = new long[PRODUCER_THREAD_NUM];
 
-    private short[] tIndex;
-    private int[] tIndexSummary;
+    private short[] tIndex = null;
+    private int[] tIndexSummary = null;
     private Map<Integer, Integer> tIndexOverflow = new HashMap<>();
     private volatile long tBase = -1;
     private long tMaxValue = Long.MIN_VALUE;
@@ -42,16 +42,16 @@ public class DefaultMessageStoreImpl extends MessageStore {
 
     private StageFile[] stageFileList = new StageFile[PRODUCER_THREAD_NUM];
     private DataFile dataFile = new DataFile();
-    private IndexFile indexFile = new IndexFile();
+    private IndexFile mainIndexFile = new IndexFile();
     private IndexFile subIndexFile = new IndexFile();
 
     private ThreadLocal<ByteBuffer> threadBufferForReadA1 = createDirectBuffer(READ_A1_BUFFER_SIZE);
     private ThreadLocal<ByteBuffer> threadBufferForReadA2 = createDirectBuffer(READ_A2_BUFFER_SIZE);
-    private ThreadLocal<ByteBuffer> threadBufferForReadAI = createDirectBuffer(READ_AI_BUFFER_SIZE);
+    private ThreadLocal<ByteBuffer> threadBufferForReadAIM = createDirectBuffer(READ_AIM_BUFFER_SIZE);
     private ThreadLocal<ByteBuffer> threadBufferForReadAIS = createDirectBuffer(READ_AIS_BUFFER_SIZE);
     private ThreadLocal<ByteBuffer> threadBufferForReadBody = createDirectBuffer(READ_BODY_BUFFER_SIZE);
 
-    private ThreadPoolExecutor aiIndexWriter = (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
+    private ThreadPoolExecutor aimIndexWriter = (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
     private ThreadPoolExecutor aisIndexWriter = (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
 
     public DefaultMessageStoreImpl() {
@@ -103,7 +103,7 @@ public class DefaultMessageStoreImpl extends MessageStore {
         long rewriteStart = System.currentTimeMillis();
         int putCounter = 0;
         int currentT = 0;
-        List<Long> aBuffer = new ArrayList<>(A_INDEX_BLOCK_SIZE);
+        List<Long> amBuffer = new ArrayList<>(A_INDEX_MAIN_BLOCK_SIZE);
         List<Long> asBuffer = new ArrayList<>(A_INDEX_SUB_BLOCK_SIZE);
         AtomicInteger pendingTasks = new AtomicInteger();
 
@@ -132,7 +132,7 @@ public class DefaultMessageStoreImpl extends MessageStore {
                     dataFile.writeA(message.getA());
                     dataFile.writeBody(message.getBody());
 
-                    aBuffer.add(message.getA());
+                    amBuffer.add(message.getA());
                     asBuffer.add(message.getA());
 
                     if (putCounter % REWRITE_SAMPLE_RATE == 0) {
@@ -164,50 +164,52 @@ public class DefaultMessageStoreImpl extends MessageStore {
                 tIndexSummary[currentT / T_INDEX_SUMMARY_FACTOR] = putCounter;
             }
 
-            // sort and store into a index block
-            if (currentT % A_INDEX_BLOCK_SIZE == 0) {
-                List<Long> finalABuffer = aBuffer;
+            // sort and store into a index main block
+            if (currentT % A_INDEX_MAIN_BLOCK_SIZE == 0) {
+                List<Long> finalAmBuffer = amBuffer;
                 pendingTasks.incrementAndGet();
-                aiIndexWriter.execute(() -> {
-                    int size = finalABuffer.size();
+                aimIndexWriter.execute(() -> {
+                    int size = finalAmBuffer.size();
                     if (size > 1) {
-                        Collections.sort(finalABuffer);
+                        Collections.sort(finalAmBuffer);
                     }
                     long sum = 0;
                     long[] metaIndex = new long[(size - 1) / A_INDEX_META_FACTOR + 1];
                     for (int i = 0; i < size; i++) {
-                        long a = finalABuffer.get(i);
+                        long a = finalAmBuffer.get(i);
                         sum += a;
-                        indexFile.writeA(sum);
+                        mainIndexFile.writeA(sum);
                         if (i % A_INDEX_META_FACTOR == 0) {
                             metaIndex[i / A_INDEX_META_FACTOR] = a;
                         }
                     }
-                    indexFile.addMetaIndex(metaIndex);
-                    indexFile.addRangeMax(finalABuffer.get(size - 1));
-                    indexFile.addRangeSum(sum);
+                    mainIndexFile.addMetaIndex(metaIndex);
+                    mainIndexFile.addRangeMax(finalAmBuffer.get(size - 1));
+                    mainIndexFile.addRangeSum(sum);
                     pendingTasks.decrementAndGet();
                 });
-                aBuffer = new ArrayList<>(A_INDEX_BLOCK_SIZE);
+                amBuffer = new ArrayList<>(A_INDEX_MAIN_BLOCK_SIZE);
             }
+
+            // sort and store into a index sub block
             if (currentT % A_INDEX_SUB_BLOCK_SIZE == 0) {
-                List<Long> finalASBuffer = asBuffer;
+                List<Long> finalAsBuffer = asBuffer;
                 pendingTasks.incrementAndGet();
                 aisIndexWriter.execute(() -> {
-                    int size = finalASBuffer.size();
+                    int size = finalAsBuffer.size();
                     if (size > 1) {
-                        Collections.sort(finalASBuffer);
+                        Collections.sort(finalAsBuffer);
                     }
                     long[] metaIndex = new long[(size - 1) / A_INDEX_META_FACTOR + 1];
                     for (int i = 0; i < size; i++) {
-                        long a = finalASBuffer.get(i);
+                        long a = finalAsBuffer.get(i);
                         subIndexFile.writeA(a);
                         if (i % A_INDEX_META_FACTOR == 0) {
                             metaIndex[i / A_INDEX_META_FACTOR] = a;
                         }
                     }
                     subIndexFile.addMetaIndex(metaIndex);
-                    subIndexFile.addRangeMax(finalASBuffer.get(size - 1));
+                    subIndexFile.addRangeMax(finalAsBuffer.get(size - 1));
                     pendingTasks.decrementAndGet();
                 });
                 asBuffer = new ArrayList<>(A_INDEX_SUB_BLOCK_SIZE);
@@ -215,16 +217,16 @@ public class DefaultMessageStoreImpl extends MessageStore {
         }
 
         while (pendingTasks.get() > 0) {
-            logger.info("Waiting for main/sub index file writer to finish");
+            logger.info("Waiting for a main/sub index file writer to finish");
             LockSupport.parkNanos(10_000_000);
         }
-        aiIndexWriter.shutdown();
+        aimIndexWriter.shutdown();
         aisIndexWriter.shutdown();
-        logger.info("All index file writer has finished");
+        logger.info("All a index file writer has finished");
 
         dataFile.flushABuffer();
         dataFile.flushBodyBuffer();
-        indexFile.flushABuffer();
+        mainIndexFile.flushABuffer();
         subIndexFile.flushABuffer();
         stageFileList = null;
         System.gc();
@@ -351,31 +353,31 @@ public class DefaultMessageStoreImpl extends MessageStore {
 
         if (tStart >= tEnd) {
             // Back to normal
-            result = getAvgValueNormal(aMin, aMax, tMinDiff, tMaxDiff);
+            result = getAvgValueFromDataFile(aMin, aMax, tMinDiff, tMaxDiff);
             sum += result.getSum();
             count += result.getCount();
 
         } else {
             // Process head
             if (tMinDiff != tStart) {
-                result = getAvgValueNormal(aMin, aMax, tMinDiff, tStart - 1);
+                result = getAvgValueFromDataFile(aMin, aMax, tMinDiff, tStart - 1);
                 sum += result.getSum();
                 count += result.getCount();
             }
             // Process tail
             if (tMaxDiff > tEnd - 1) {
-                result = getAvgValueNormal(aMin, aMax, tEnd, tMaxDiff);
+                result = getAvgValueFromDataFile(aMin, aMax, tEnd, tMaxDiff);
                 sum += result.getSum();
                 count += result.getCount();
             }
             // Process middle
             int t = tStart;
             while (t < tEnd) {
-                if (t % A_INDEX_BLOCK_SIZE == 0 && t + A_INDEX_BLOCK_SIZE <= tEnd) {
-                    result = getAvgValueAccum(aMin, aMax, t, t + A_INDEX_BLOCK_SIZE - 1);
-                    t += A_INDEX_BLOCK_SIZE;
+                if (t % A_INDEX_MAIN_BLOCK_SIZE == 0 && t + A_INDEX_MAIN_BLOCK_SIZE <= tEnd) {
+                    result = getAvgValueFromAccumIndex(aMin, aMax, t, t + A_INDEX_MAIN_BLOCK_SIZE - 1);
+                    t += A_INDEX_MAIN_BLOCK_SIZE;
                 } else {
-                    result = getAvgValueFast(aMin, aMax, t, t + A_INDEX_SUB_BLOCK_SIZE - 1);
+                    result = getAvgFromSortedIndex(aMin, aMax, t, t + A_INDEX_SUB_BLOCK_SIZE - 1);
                     t += A_INDEX_SUB_BLOCK_SIZE;
                 }
                 sum += result.getSum();
@@ -391,7 +393,7 @@ public class DefaultMessageStoreImpl extends MessageStore {
         return count > 0 ? sum / count : 0;
     }
 
-    private SumAndCount getAvgValueNormal(long aMin, long aMax, int tMin, int tMax) {
+    private SumAndCount getAvgValueFromDataFile(long aMin, long aMax, int tMin, int tMax) {
         long sum = 0;
         int count = 0;
 
@@ -424,22 +426,27 @@ public class DefaultMessageStoreImpl extends MessageStore {
         return new SumAndCount(sum, count);
     }
 
-    private SumAndCount getAvgValueFast(long aMin, long aMax, int tMin, int tMax) {
+    private SumAndCount getAvgFromSortedIndex(long aMin, long aMax, int tMin, int tMax) {
         long sum = 0;
         int count = 0;
-        long[] metaIndex = subIndexFile.getMetaIndex(tMin / A_INDEX_SUB_BLOCK_SIZE);
+
+        IndexFile indexFile = subIndexFile;
+        int blockSize = A_INDEX_SUB_BLOCK_SIZE;
+        ByteBuffer aiByteBufferForRead = threadBufferForReadAIS.get();
+
+        long[] metaIndex = indexFile.getMetaIndex(tMin / blockSize);
         long rangeMin = metaIndex[0];
-        long rangeMax = subIndexFile.getRangeMax(tMin / A_INDEX_SUB_BLOCK_SIZE);
+        long rangeMax = indexFile.getRangeMax(tMin / blockSize);
 
         if (rangeMin > aMax) {
             return new SumAndCount(0, 0);
-        }
-        if (rangeMax < aMin) {
+        } else if (rangeMax < aMin) {
             return new SumAndCount(0, 0);
         }
 
         long fullStartOffset = getOffsetByTDiff(tMin);
         long fullEndOffset = getOffsetByTDiff(tMax + 1);
+
         long startOffset = fullStartOffset;
         long endOffset = fullEndOffset;
 
@@ -475,12 +482,11 @@ public class DefaultMessageStoreImpl extends MessageStore {
             }
         }
 
-        ByteBuffer aiByteBufferForRead = threadBufferForReadAIS.get();
         aiByteBufferForRead.flip();
 
         for (long offset = startOffset; offset < endOffset; offset++) {
             if (aiByteBufferForRead.remaining() == 0) {
-                subIndexFile.fillReadAIBuffer(aiByteBufferForRead, offset, endOffset);
+                indexFile.fillReadAIBuffer(aiByteBufferForRead, offset, endOffset);
             }
             long a = aiByteBufferForRead.getLong();
             if (a > aMax) {
@@ -491,37 +497,44 @@ public class DefaultMessageStoreImpl extends MessageStore {
                 count++;
             }
         }
+
         aiByteBufferForRead.clear();
+
         return new SumAndCount(sum, count);
     }
 
-    private SumAndCount getAvgValueAccum(long aMin, long aMax, int tMin, int tMax) {
+    private SumAndCount getAvgValueFromAccumIndex(long aMin, long aMax, int tMin, int tMax) {
         long sum;
         int count;
-        long[] metaIndex = indexFile.getMetaIndex(tMin / A_INDEX_BLOCK_SIZE);
+
+        IndexFile indexFile = mainIndexFile;
+        int blockSize = A_INDEX_MAIN_BLOCK_SIZE;
+        ByteBuffer aiByteBufferForRead = threadBufferForReadAIM.get();
+
+        long[] metaIndex = indexFile.getMetaIndex(tMin / blockSize);
         long rangeMin = metaIndex[0];
-        long rangeMax = indexFile.getRangeMax(tMin / A_INDEX_BLOCK_SIZE);
-        long rangeSum = indexFile.getRangeSum(tMin / A_INDEX_BLOCK_SIZE);
+        long rangeMax = indexFile.getRangeMax(tMin / blockSize);
+        long rangeSum = indexFile.getRangeSum(tMin / blockSize);
 
         if (aMax < rangeMin) {
             return new SumAndCount(0, 0);
-        }
-        if (aMin > rangeMax) {
+        } else if (aMin > rangeMax) {
             return new SumAndCount(0, 0);
         }
 
         long fullStartOffset = getOffsetByTDiff(tMin);
         long fullEndOffset = getOffsetByTDiff(tMax + 1);
+
+        if (aMin <= rangeMin && aMax >= rangeMax) {
+            sum = rangeSum;
+            count = (int) (fullEndOffset - fullStartOffset);
+            return new SumAndCount(sum, count);
+        }
+
         long startOffset = fullStartOffset;
         long endOffset = fullEndOffset;
         long realStartOffset = -1;
         long realEndOffset = -1;
-
-        if (aMin <= rangeMin && aMax >= rangeMax) {
-            sum = rangeSum;
-            count = (int) (endOffset - startOffset);
-            return new SumAndCount(sum, count);
-        }
 
         int start = 0;
         if (aMin > rangeMin) {
@@ -557,7 +570,6 @@ public class DefaultMessageStoreImpl extends MessageStore {
             realEndOffset = fullEndOffset;
         }
 
-        ByteBuffer aiByteBufferForRead = threadBufferForReadAI.get();
         long startPrevSum = 0;
         long endSum = rangeSum;
 

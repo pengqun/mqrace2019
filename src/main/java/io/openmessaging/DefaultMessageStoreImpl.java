@@ -177,6 +177,7 @@ public class DefaultMessageStoreImpl extends MessageStore {
                     for (int i = 0; i < size; i++) {
                         long a = finalAmBuffer.get(i);
                         sum += a;
+//                        mainIndexFile.writeA(a);
                         mainIndexFile.writeA(sum);
                         if (i % A_INDEX_META_FACTOR == 0) {
                             metaIndex[i / A_INDEX_META_FACTOR] = a;
@@ -335,19 +336,19 @@ public class DefaultMessageStoreImpl extends MessageStore {
 
     @Override
     public long getAvgValue(long aMin, long aMax, long tMin, long tMax) {
-        long avgStart = System.currentTimeMillis();
-        int avgId = avgCounter.getAndIncrement();
-        if (avgId == 0) {
-            PerfStats._getEnd = System.currentTimeMillis();
-            PerfStats._avgStart = PerfStats._getEnd;
-        }
-        if (avgId % AVG_SAMPLE_RATE == 0) {
-            logger.info("getAvgValue - tMin: " + tMin + ", tMax: " + tMax + ", aMin: " + aMin + ", aMax: " + aMax
-                    + ", tRange: " + (tMax - tMin) + ", avgId: " + avgId);
-        }
-        if (avgId == TEST_BOUNDARY) {
-            PerfStats.printStats(this);
-        }
+//        long avgStart = System.currentTimeMillis();
+//        int avgId = avgCounter.getAndIncrement();
+//        if (avgId == 0) {
+//            PerfStats._getEnd = System.currentTimeMillis();
+//            PerfStats._avgStart = PerfStats._getEnd;
+//        }
+//        if (avgId % AVG_SAMPLE_RATE == 0) {
+//            logger.info("getAvgValue - tMin: " + tMin + ", tMax: " + tMax + ", aMin: " + aMin + ", aMax: " + aMax
+//                    + ", tRange: " + (tMax - tMin) + ", avgId: " + avgId);
+//        }
+//        if (avgId == TEST_BOUNDARY) {
+//            PerfStats.printStats(this);
+//        }
 
         long sum = 0;
         int count = 0;
@@ -390,6 +391,7 @@ public class DefaultMessageStoreImpl extends MessageStore {
             int t = tStart;
             while (t < tEnd) {
                 if (t % A_INDEX_MAIN_BLOCK_SIZE == 0 && t + A_INDEX_MAIN_BLOCK_SIZE <= tEnd) {
+//                    result = getAvgFromSortedIndex(aMin, aMax, t, t + A_INDEX_MAIN_BLOCK_SIZE - 1);
                     result = getAvgValueFromAccumIndex(aMin, aMax, t, t + A_INDEX_MAIN_BLOCK_SIZE - 1);
                     t += A_INDEX_MAIN_BLOCK_SIZE;
                 } else {
@@ -401,10 +403,10 @@ public class DefaultMessageStoreImpl extends MessageStore {
             }
         }
 
-        if (avgId % AVG_SAMPLE_RATE == 0) {
-            logger.info("Got " + count + ", time: " + (System.currentTimeMillis() - avgStart) + ", avgId: " + avgId);
-        }
-        avgMsgCounter.addAndGet(count);
+//        if (avgId % AVG_SAMPLE_RATE == 0) {
+//            logger.info("Got " + count + ", time: " + (System.currentTimeMillis() - avgStart) + ", avgId: " + avgId);
+//        }
+//        avgMsgCounter.addAndGet(count);
 
         return count > 0 ? sum / count : 0;
     }

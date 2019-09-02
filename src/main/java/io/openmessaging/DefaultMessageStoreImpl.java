@@ -42,13 +42,7 @@ public class DefaultMessageStoreImpl extends MessageStore {
     private volatile boolean rewriteDone = false;
     private volatile boolean rewriting = false;
 
-    private List<StageFile> stageFileList = Collections.synchronizedList(new ArrayList<>());
-    private ThreadLocal<StageFile> threadStageFile = ThreadLocal.withInitial(() -> {
-        StageFile stageFile = new StageFile(threadIdHolder.get());
-        stageFileList.add(stageFile);
-        return stageFile;
-    });
-
+    private StageFile[] stageFileList = new StageFile[PRODUCER_THREAD_NUM];
     private DataFile dataFile = new DataFile();
     private IndexFile indexFile = new IndexFile();
     private IndexFile subIndexFile = new IndexFile();
@@ -62,6 +56,10 @@ public class DefaultMessageStoreImpl extends MessageStore {
     private ThreadPoolExecutor aisIndexWriter = (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
 
     public DefaultMessageStoreImpl() {
+        for (int i = 0; i < stageFileList.length; i++) {
+            StageFile stageFile = new StageFile(i);
+            stageFileList[i] = stageFile;
+        }
         Arrays.fill(threadMinT, -1);
         Arrays.fill(threadMaxT, -1);
     }
@@ -70,9 +68,10 @@ public class DefaultMessageStoreImpl extends MessageStore {
     public void put(Message message) {
 //        long putStart = System.nanoTime();
         int putId = putCounter.getAndIncrement();
+        int threadId = threadIdHolder.get();
 
         if (tBase < 0) {
-            threadMinT[threadIdHolder.get()] = message.getT();
+            threadMinT[threadId] = message.getT();
             if (putId == 0) {
                 PerfStats._putStart = System.currentTimeMillis();
                 long min = Long.MAX_VALUE;
@@ -95,9 +94,9 @@ public class DefaultMessageStoreImpl extends MessageStore {
 //            throw new RuntimeException("" + (System.currentTimeMillis() - PerfStats._putStart));
 //        }
 
-        threadStageFile.get().writeMessage(message);
+        stageFileList[threadId].writeMessage(message);
 
-        threadMaxT[threadIdHolder.get()] = message.getT();
+        threadMaxT[threadId] = message.getT();
 
 //        if (putId % PUT_SAMPLE_RATE == 0) {
 //            logger.info("Write message to stage file with t: " + message.getT() + ", a: " + message.getA()
@@ -120,7 +119,7 @@ public class DefaultMessageStoreImpl extends MessageStore {
         tIndexSummary = new int[tIndex.length / T_INDEX_SUMMARY_FACTOR + 1];
         logger.info("Created t index and summary with length: " + tIndex.length);
 
-        List<StageFile> readingFiles = new ArrayList<>(stageFileList);
+        List<StageFile> readingFiles = new ArrayList<>(Arrays.asList(stageFileList));
         readingFiles.forEach(StageFile::prepareForRead);
 
         while (true) {

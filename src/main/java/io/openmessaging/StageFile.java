@@ -27,6 +27,7 @@ class StageFile {
     private long prevT = 0;
     private int overflowIndex = 0;
     private List<Long> overflowList = new ArrayList<>();
+    private byte[] body = new byte[BODY_BYTE_LENGTH];
 
     StageFile(int index) {
         RandomAccessFile raf;
@@ -101,9 +102,7 @@ class StageFile {
         }
         long t = prevT + tDiff;
         prevT = t;
-
         long a = byteBufferForRead.getLong();
-        byte[] body = new byte[BODY_BYTE_LENGTH];
         byteBufferForRead.get(body);
 
         peeked = new Message(a, t, body);

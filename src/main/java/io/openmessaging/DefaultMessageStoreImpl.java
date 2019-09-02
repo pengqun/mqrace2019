@@ -64,12 +64,12 @@ public class DefaultMessageStoreImpl extends MessageStore {
 
     @Override
     public void put(Message message) {
-        long putStart = System.nanoTime();
-        int putId = putCounter.getAndIncrement();
+//        long putStart = System.nanoTime();
         int threadId = threadIdHolder.get();
 
         if (tBase < 0) {
             threadMinT[threadId] = message.getT();
+            int putId = putCounter.getAndIncrement();
             if (putId == 0) {
                 PerfStats._putStart = System.currentTimeMillis();
                 long min = Long.MAX_VALUE;
@@ -92,10 +92,10 @@ public class DefaultMessageStoreImpl extends MessageStore {
 //        }
         stageFileList[threadId].writeMessage(message);
 
-        if (putId % PUT_SAMPLE_RATE == 0) {
-            logger.info("Write message to stage file with t: " + message.getT() + ", a: " + message.getA()
-                    + ", time: " + (System.nanoTime() - putStart) + ", putId: " + putId);
-        }
+//        if (putId % PUT_SAMPLE_RATE == 0) {
+//            logger.info("Write message to stage file with t: " + message.getT() + ", a: " + message.getA()
+//                    + ", time: " + (System.nanoTime() - putStart) + ", putId: " + putId);
+//        }
     }
 
     private int rewriteFiles() {
@@ -133,9 +133,9 @@ public class DefaultMessageStoreImpl extends MessageStore {
                     amBuffer.add(message.getA());
                     asBuffer.add(message.getA());
 
-                    if (rewriteCount % REWRITE_SAMPLE_RATE == 0) {
-                        logger.info("Write message to data file: " + rewriteCount);
-                    }
+//                    if (rewriteCount % REWRITE_SAMPLE_RATE == 0) {
+//                        logger.info("Write message to data file: " + rewriteCount);
+//                    }
 //                    if (putCounter == 200_000_000) {
 //                        throw new RuntimeException("" + (System.currentTimeMillis() - rewriteStart) + ", " + putCounter);
 //                    }
@@ -229,12 +229,6 @@ public class DefaultMessageStoreImpl extends MessageStore {
         mainIndexFile.flushABuffer();
         subIndexFile.flushABuffer();
 
-        for (StageFile stageFile : stageFileList) {
-            logger.info("write: " + stageFile.fileSize() / STAGE_MSG_BYTE_LENGTH
-                    + ", read: " + stageFile.getReadCount()
-                    + ", offset: " + stageFile.getReadOffset() / STAGE_MSG_BYTE_LENGTH
-                    + ", consumed: " + stageFile.getConsumeCount());
-        }
         stageFileList = null;
         System.gc();
         logger.info("Done rewrite files, rewrite count: " + rewriteCount
@@ -244,17 +238,17 @@ public class DefaultMessageStoreImpl extends MessageStore {
 
     @Override
     public List<Message> getMessage(long aMin, long aMax, long tMin, long tMax) {
-        long getStart = System.currentTimeMillis();
-        int getId = getCounter.getAndIncrement();
-        if (getId == 0) {
-            PerfStats._putEnd = System.currentTimeMillis();
-            PerfStats._getStart = PerfStats._putEnd;
-//            PerfStats.printStats(this);
-        }
-        if (getId % GET_SAMPLE_RATE == 0) {
-            logger.info("getMessage - tMin: " + tMin + ", tMax: " + tMax
-                    + ", aMin: " + aMin + ", aMax: " + aMax + ", getId: " + getId);
-        }
+//        long getStart = System.currentTimeMillis();
+//        int getId = getCounter.getAndIncrement();
+//        if (getId == 0) {
+//            PerfStats._putEnd = System.currentTimeMillis();
+//            PerfStats._getStart = PerfStats._putEnd;
+////            PerfStats.printStats(this);
+//        }
+//        if (getId % GET_SAMPLE_RATE == 0) {
+//            logger.info("getMessage - tMin: " + tMin + ", tMax: " + tMax
+//                    + ", aMin: " + aMin + ", aMax: " + aMax + ", getId: " + getId);
+//        }
         if (!rewriteDone) {
             synchronized (this) {
                 if (!rewriteDone) {
@@ -264,7 +258,6 @@ public class DefaultMessageStoreImpl extends MessageStore {
                         totalSize += stageFile.fileSize();
                     }
                     logger.info("Flushed all stage files, total size: " + totalSize
-                            + ", put count: " + putCounter.get()
                             + ", file count: " + totalSize / STAGE_MSG_BYTE_LENGTH);
                     int rewriteCount;
                     try {
@@ -273,9 +266,9 @@ public class DefaultMessageStoreImpl extends MessageStore {
                         logger.info("Failed to rewrite files: " + e.getClass().getSimpleName() + " - " + e.getMessage());
                         throw e;
                     }
-                    if (rewriteCount != putCounter.get() || rewriteCount != totalSize / STAGE_MSG_BYTE_LENGTH) {
+                    if (rewriteCount != totalSize / STAGE_MSG_BYTE_LENGTH) {
                         logger.info("Inconsistent msg count");
-                        throw new RuntimeException("Inconsistent msg count");
+                        throw new RuntimeException("Abort!");
                     }
                     rewriteDone = true;
                 }
@@ -324,12 +317,12 @@ public class DefaultMessageStoreImpl extends MessageStore {
         aByteBufferForRead.clear();
         bodyByteBufferForRead.clear();
 
-        getMsgCounter.addAndGet(result.size());
+//        if (getId % GET_SAMPLE_RATE == 0) {
+//            logger.info("Return sorted result with size: " + result.size()
+//                    + ", time: " + (System.currentTimeMillis() - getStart) + ", getId: " + getId);
+//        }
+//        getMsgCounter.addAndGet(result.size());
 
-        if (getId % GET_SAMPLE_RATE == 0) {
-            logger.info("Return sorted result with size: " + result.size()
-                    + ", time: " + (System.currentTimeMillis() - getStart) + ", getId: " + getId);
-        }
         return result;
     }
 
@@ -348,7 +341,6 @@ public class DefaultMessageStoreImpl extends MessageStore {
 //        if (avgId == TEST_BOUNDARY) {
 //            PerfStats.printStats(this);
 //        }
-
         long sum = 0;
         int count = 0;
 

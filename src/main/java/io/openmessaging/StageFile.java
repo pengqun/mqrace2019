@@ -20,16 +20,17 @@ class StageFile {
 
     private long lastT = 0;
     private long prevT = 0;
-    private int overflowIndex = 0;
+
+//    private byte[] tList = new byte[(int) (Integer.MAX_VALUE / PRODUCER_THREAD_NUM * 1.2)];
+//    private int tListIndex = 0;
+
     private List<Long> overflowList = new ArrayList<>();
+    private int overflowIndex = 0;
 
     private long readOffset = 0;
     private Message peeked = null;
     private byte[] bodyContainer = new byte[BODY_BYTE_LENGTH];
     private boolean doneRead = false;
-
-    private int readCount = 0;
-    private int consumeCount = 0;
 
     StageFile(int index) {
         RandomAccessFile raf;
@@ -48,8 +49,10 @@ class StageFile {
         long tDiff = message.getT() - lastT;
         if (tDiff < 255) {
             byteBufferForWrite.put((byte) tDiff);
+//            tList[tListIndex++] = (byte) tDiff;
         } else {
             byteBufferForWrite.put((byte) 255);
+//            tList[tListIndex++] = (byte) 255;
             overflowList.add(tDiff);
         }
         lastT = message.getT();
@@ -102,8 +105,6 @@ class StageFile {
         long a = byteBufferForRead.getLong();
         byteBufferForRead.get(bodyContainer);
 
-        readCount++;
-
         peeked = new Message(a, t, bodyContainer);
         return peeked;
     }
@@ -111,7 +112,6 @@ class StageFile {
     Message consumePeeked() {
         Message consumed = peeked;
         peeked = null;
-        consumeCount++;
         return consumed;
     }
 
@@ -134,17 +134,5 @@ class StageFile {
 
     boolean isDoneRead() {
         return doneRead;
-    }
-
-    public long getReadOffset() {
-        return readOffset;
-    }
-
-    public int getReadCount() {
-        return readCount;
-    }
-
-    public int getConsumeCount() {
-        return consumeCount;
     }
 }

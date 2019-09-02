@@ -32,7 +32,6 @@ public class DefaultMessageStoreImpl extends MessageStore {
     private AtomicInteger threadIdCounter = new AtomicInteger();
     private ThreadLocal<Integer> threadIdHolder = ThreadLocal.withInitial(() -> threadIdCounter.getAndIncrement());
     private long[] threadMinT = new long[PRODUCER_THREAD_NUM];
-    private long[] threadMaxT = new long[PRODUCER_THREAD_NUM];
 
     private short[] tIndex = null;
     private int[] tIndexSummary = null;
@@ -61,7 +60,6 @@ public class DefaultMessageStoreImpl extends MessageStore {
             stageFileList[i] = stageFile;
         }
         Arrays.fill(threadMinT, -1);
-        Arrays.fill(threadMaxT, -1);
     }
 
     @Override
@@ -94,39 +92,23 @@ public class DefaultMessageStoreImpl extends MessageStore {
 //        }
         stageFileList[threadId].writeMessage(message);
 
-        threadMaxT[threadId] = message.getT();
-
         if (putId % PUT_SAMPLE_RATE == 0) {
             logger.info("Write message to stage file with t: " + message.getT() + ", a: " + message.getA()
                     + ", time: " + (System.nanoTime() - putStart) + ", putId: " + putId);
         }
     }
 
-    private void rewriteFiles() {
+    private int rewriteFiles() {
         logger.info("Start rewrite files");
         long rewriteStart = System.currentTimeMillis();
-        int putCounter = 0;
+        int rewriteCount = 0;
         int currentT = 0;
         List<Long> amBuffer = new ArrayList<>(A_INDEX_MAIN_BLOCK_SIZE);
         List<Long> asBuffer = new ArrayList<>(A_INDEX_SUB_BLOCK_SIZE);
         AtomicInteger pendingTasks = new AtomicInteger();
 
-        for (StageFile stageFile : stageFileList) {
-            long lastT = stageFile.getLastT();
-            logger.info("Got lastT: " + lastT);
-            tMaxValue = Math.max(tMaxValue, lastT);
-        }
+        tMaxValue = Arrays.stream(stageFileList).mapToLong(StageFile::getLastT).max().orElse(0);
         logger.info("Determined t max value: " + tMaxValue);
-
-        long anotherMax = Arrays.stream(stageFileList).mapToLong(StageFile::getLastT).max().orElse(0);
-        if (anotherMax != tMaxValue) {
-            logger.info("Unmatched t max value: " + anotherMax);
-        }
-
-        long yetAnotherMax = Arrays.stream(threadMaxT).max().orElse(tMaxValue);
-        if (yetAnotherMax != tMaxValue) {
-            logger.info("Unmatched t max value 2: " + yetAnotherMax);
-        }
 
         tIndex = new short[(int) (tMaxValue - tBase + 1)];
         tIndexSummary = new int[tIndex.length / T_INDEX_SUMMARY_FACTOR + 1];
@@ -136,7 +118,7 @@ public class DefaultMessageStoreImpl extends MessageStore {
         readingFiles.forEach(StageFile::prepareForRead);
 
         while (true) {
-            int writeCount = 0;
+            int repeatCount = 0;
             Iterator<StageFile> iterator = readingFiles.iterator();
 
             while (iterator.hasNext()) {
@@ -153,14 +135,14 @@ public class DefaultMessageStoreImpl extends MessageStore {
                     amBuffer.add(message.getA());
                     asBuffer.add(message.getA());
 
-                    if (putCounter % REWRITE_SAMPLE_RATE == 0) {
-                        logger.info("Write message to data file: " + putCounter);
+                    if (rewriteCount % REWRITE_SAMPLE_RATE == 0) {
+                        logger.info("Write message to data file: " + rewriteCount);
                     }
 //                    if (putCounter == 200_000_000) {
 //                        throw new RuntimeException("" + (System.currentTimeMillis() - rewriteStart) + ", " + putCounter);
 //                    }
-                    putCounter++;
-                    writeCount++;
+                    rewriteCount++;
+                    repeatCount++;
                 }
             }
 
@@ -169,17 +151,17 @@ public class DefaultMessageStoreImpl extends MessageStore {
             }
 
             // update t index
-            if (writeCount < Short.MAX_VALUE) {
-                tIndex[currentT] = (short) writeCount;
+            if (repeatCount < Short.MAX_VALUE) {
+                tIndex[currentT] = (short) repeatCount;
             } else {
                 tIndex[currentT] = Short.MAX_VALUE;
-                tIndexOverflow.put(currentT, writeCount);
+                tIndexOverflow.put(currentT, repeatCount);
             }
             currentT++;
 
             // update t summary
             if (currentT % T_INDEX_SUMMARY_FACTOR == 0) {
-                tIndexSummary[currentT / T_INDEX_SUMMARY_FACTOR] = putCounter;
+                tIndexSummary[currentT / T_INDEX_SUMMARY_FACTOR] = rewriteCount;
             }
 
             // sort and store into a index main block
@@ -248,8 +230,9 @@ public class DefaultMessageStoreImpl extends MessageStore {
         subIndexFile.flushABuffer();
         stageFileList = null;
         System.gc();
-        logger.info("Done rewrite files, msg count: " + putCounter
+        logger.info("Done rewrite files, rewrite count: " + rewriteCount
                 + ", time: " + (System.currentTimeMillis() - rewriteStart));
+        return rewriteCount;
     }
 
     @Override
@@ -274,16 +257,24 @@ public class DefaultMessageStoreImpl extends MessageStore {
                         totalSize += stageFile.fileSize();
                         logger.info("overflow size: " + stageFile.overflowSize());
                     }
-                    logger.info("Flushed all stage files, total size: " + totalSize);
+                    logger.info("Flushed all stage files, total size: " + totalSize
+                            + ", put count: " + putCounter.get()
+                            + ", file count: " + totalSize / STAGE_MSG_BYTE_LENGTH);
+                    int rewriteCount;
                     try {
-                        rewriteFiles();
+                        rewriteCount = rewriteFiles();
                     } catch (Throwable e) {
                         logger.info("Failed to rewrite files: " + e.getClass().getSimpleName() + " - " + e.getMessage());
                         throw e;
                     }
+                    if (rewriteCount != putCounter.get() || rewriteCount != totalSize / STAGE_MSG_BYTE_LENGTH) {
+                        throw new RuntimeException("Inconsistent msg count");
+                    }
                     rewriteDone = true;
                 }
-                logger.info("Rewrite task has finished, time: " + (System.currentTimeMillis() - _getStart));
+                logger.info("Rewrite task has finished" +
+                        ", t index overflow: " + tIndexOverflow.size() +
+                        ", time: " + (System.currentTimeMillis() - _getStart));
             }
         }
 

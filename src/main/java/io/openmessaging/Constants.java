@@ -15,9 +15,9 @@ class Constants {
 
     static final int T_INDEX_SUMMARY_FACTOR = 64;
 
-    static final int A_INDEX_MAIN_BLOCK_SIZE = 1024 * 15;
-    static final int A_INDEX_SUB_BLOCK_SIZE = 1024 * 3;
-    static final int A_INDEX_META_FACTOR = 32;
+    static final int A_INDEX_MAIN_BLOCK_SIZE = 10000;
+    static final int A_INDEX_SUB_BLOCK_SIZE = 2500;
+    static final int A_INDEX_META_FACTOR = 25;
 
     static final int WRITE_STAGE_BUFFER_SIZE = STAGE_MSG_BYTE_LENGTH * 1024;
     static final int READ_STAGE_BUFFER_SIZE = STAGE_MSG_BYTE_LENGTH * 1024 * 16;

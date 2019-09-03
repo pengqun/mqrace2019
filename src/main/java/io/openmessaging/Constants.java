@@ -18,7 +18,7 @@ class Constants {
     static final int A_INDEX_SUB_BLOCK_SIZE = 1024 * 3;
     static final int A_INDEX_META_FACTOR = 32;
 
-    static final int A_INDEX_CACHE_LENGTH = A_INDEX_META_FACTOR / 10;
+    static final int A_INDEX_CACHE_LENGTH = A_INDEX_META_FACTOR / 16;
 
     static final boolean USE_ACCUMULATED_SUM = true;
     static final boolean USE_FORK_JOIN_POOL = false;

@@ -240,7 +240,10 @@ public class DefaultMessageStoreImpl extends MessageStore {
         executor.execute(() -> {
             Arrays.parallelSort(persistBuffer);
             long[] metaIndex = new long[(size - 1) / A_INDEX_META_FACTOR + 1 + 1];
-            ByteBuffer byteBuffer = ByteBuffer.allocateDirect(metaIndex.length * A_INDEX_CACHE_LENGTH * KEY_A_BYTE_LENGTH);
+            ByteBuffer byteBuffer = null;
+            if (isAccum) {
+                byteBuffer = ByteBuffer.allocateDirect(metaIndex.length * A_INDEX_CACHE_LENGTH * KEY_A_BYTE_LENGTH);
+            }
             long sum = 0;
             for (int i = 0; i < size; i++) {
                 long a = persistBuffer[i];
@@ -692,7 +695,7 @@ public class DefaultMessageStoreImpl extends MessageStore {
         if (realStartOffset < 0) {
             aiByteBufferForRead.flip();
             long prevSum = 0;
-            boolean diskRead = false;
+//            boolean diskRead = false;
             for (long offset = startOffset; offset < fullEndOffset; offset++) {
                 long aSum;
                 if (offset - startOffset < A_INDEX_CACHE_LENGTH) {
@@ -705,7 +708,7 @@ public class DefaultMessageStoreImpl extends MessageStore {
                     }
                     if (aiByteBufferForRead.remaining() == 0) {
                         indexFile.fillReadAIBuffer(aiByteBufferForRead, offset, fullEndOffset);
-                        diskRead = true;
+//                        diskRead = true;
                     }
                     aSum = aiByteBufferForRead.getLong();
                 }
@@ -720,11 +723,11 @@ public class DefaultMessageStoreImpl extends MessageStore {
                 }
                 prevSum = aSum;
             }
-            if (diskRead) {
-                cacheMiss.incrementAndGet();
-            } else {
-                cacheHit.incrementAndGet();
-            }
+//            if (diskRead) {
+//                cacheMiss.incrementAndGet();
+//            } else {
+//                cacheHit.incrementAndGet();
+//            }
             aiByteBufferForRead.clear();
         }
 
@@ -732,7 +735,7 @@ public class DefaultMessageStoreImpl extends MessageStore {
         if (realEndOffset < 0) {
             aiByteBufferForRead.flip();
             long prevSum = 0;
-            boolean diskRead = false;
+//            boolean diskRead = false;
             for (long offset = endOffset; offset < fullEndOffset; offset++) {
                 long aSum;
                 if (offset - endOffset < A_INDEX_CACHE_LENGTH) {
@@ -745,7 +748,7 @@ public class DefaultMessageStoreImpl extends MessageStore {
                     }
                     if (aiByteBufferForRead.remaining() == 0) {
                         indexFile.fillReadAIBuffer(aiByteBufferForRead, offset, fullEndOffset);
-                        diskRead = true;
+//                        diskRead = true;
                     }
                     aSum = aiByteBufferForRead.getLong();
                 }
@@ -760,11 +763,11 @@ public class DefaultMessageStoreImpl extends MessageStore {
                 }
                 prevSum = aSum;
             }
-            if (diskRead) {
-                cacheMiss.incrementAndGet();
-            } else {
-                cacheHit.incrementAndGet();
-            }
+//            if (diskRead) {
+//                cacheMiss.incrementAndGet();
+//            } else {
+//                cacheHit.incrementAndGet();
+//            }
             aiByteBufferForRead.clear();
         }
 

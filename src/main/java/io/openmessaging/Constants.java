@@ -20,8 +20,8 @@ class Constants {
 
     static final int A_INDEX_CACHE_LENGTH = A_INDEX_META_FACTOR / 16;
 
-    static final boolean USE_ACCUMULATED_SUM = true;
-    static final boolean USE_FORK_JOIN_POOL = false;
+    static final boolean USE_ACCUMULATED_SUM = false;
+    static final boolean USE_FORK_JOIN_POOL = true;
 
     static final int WRITE_STAGE_BUFFER_SIZE = STAGE_MSG_BYTE_LENGTH * 1024 * 4;
     static final int WRITE_A_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024 * 4;

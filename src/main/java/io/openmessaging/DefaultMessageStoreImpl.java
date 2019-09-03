@@ -181,13 +181,13 @@ public class DefaultMessageStoreImpl extends MessageStore {
 
             // store a into multiple index
             if (currentT % A_INDEX_MAIN_BLOCK_SIZE == 0) {
-                persistToAIndexFile(aimBuffer, aimIndex, aimIndexWriter, mainIndexFile, true);
-//                persistToAIndexFile(aimBuffer, aimIndex, aimIndexWriter, mainIndexFile, false);
+//                persistToAIndexFile(aimBuffer, aimIndex, aimIndexWriter, mainIndexFile, true);
+                persistToAIndexFile(aimBuffer, aimIndex, aimIndexWriter, mainIndexFile, false);
                 aimIndex = 0;
             }
             if (currentT % A_INDEX_SUB_BLOCK_SIZE == 0) {
-                persistToAIndexFile(aisBuffer, aisIndex, aisIndexWriter, subIndexFile, true);
-//                persistToAIndexFile(aisBuffer, aisIndex, aisIndexWriter, subIndexFile, false);
+//                persistToAIndexFile(aisBuffer, aisIndex, aisIndexWriter, subIndexFile, true);
+                persistToAIndexFile(aisBuffer, aisIndex, aisIndexWriter, subIndexFile, false);
                 aisIndex = 0;
             }
         }
@@ -445,12 +445,12 @@ public class DefaultMessageStoreImpl extends MessageStore {
                 if (t % A_INDEX_MAIN_BLOCK_SIZE == 0 && t + A_INDEX_MAIN_BLOCK_SIZE <= tEnd) {
 //                    result = getAvgFromSortedIndex(aMin, aMax, t, t + A_INDEX_MAIN_BLOCK_SIZE - 1, true);
 //                    result = getAvgValueFromAccumIndex(aMin, aMax, t, t + A_INDEX_MAIN_BLOCK_SIZE - 1, true);
-                    tasks.add(new GetAvgValueTask(aMin, aMax, t, t + A_INDEX_MAIN_BLOCK_SIZE - 1, 2, true));
+                    tasks.add(new GetAvgValueTask(aMin, aMax, t, t + A_INDEX_MAIN_BLOCK_SIZE - 1, 1, true));
                     t += A_INDEX_MAIN_BLOCK_SIZE;
                 } else {
 //                    result = getAvgFromSortedIndex(aMin, aMax, t, t + A_INDEX_SUB_BLOCK_SIZE - 1, false);
 //                    result = getAvgValueFromAccumIndex(aMin, aMax, t, t + A_INDEX_SUB_BLOCK_SIZE - 1, false);
-                    tasks.add(new GetAvgValueTask(aMin, aMax, t, t + A_INDEX_SUB_BLOCK_SIZE - 1, 2, false));
+                    tasks.add(new GetAvgValueTask(aMin, aMax, t, t + A_INDEX_SUB_BLOCK_SIZE - 1, 1, false));
                     t += A_INDEX_SUB_BLOCK_SIZE;
                 }
 //                sum += result.getSum();

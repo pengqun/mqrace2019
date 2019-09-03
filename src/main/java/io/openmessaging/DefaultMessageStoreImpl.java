@@ -172,20 +172,28 @@ public class DefaultMessageStoreImpl extends MessageStore {
                     if (size > 1) {
                         Collections.sort(finalAmBuffer);
                     }
-//                    long sum = 0;
                     long[] metaIndex = new long[(size - 1) / A_INDEX_META_FACTOR + 1];
+//                    for (int i = 0; i < size; i++) {
+//                        long a = finalAmBuffer.get(i);
+//                        mainIndexFile.writeA(a);
+//                        if (i % A_INDEX_META_FACTOR == 0) {
+//                            metaIndex[i / A_INDEX_META_FACTOR] = a;
+//                        }
+//                    }
+//                    mainIndexFile.addMetaIndex(metaIndex);
+//                    mainIndexFile.addRangeMax(finalAmBuffer.get(size - 1));
+                    long sum = 0;
                     for (int i = 0; i < size; i++) {
                         long a = finalAmBuffer.get(i);
-//                        sum += a;
-                        mainIndexFile.writeA(a);
-//                        mainIndexFile.writeA(sum);
+                        sum += a;
+                        mainIndexFile.writeA(sum);
                         if (i % A_INDEX_META_FACTOR == 0) {
                             metaIndex[i / A_INDEX_META_FACTOR] = a;
                         }
                     }
                     mainIndexFile.addMetaIndex(metaIndex);
                     mainIndexFile.addRangeMax(finalAmBuffer.get(size - 1));
-//                    mainIndexFile.addRangeSum(sum);
+                    mainIndexFile.addRangeSum(sum);
                     pendingTasks.decrementAndGet();
                 });
                 amBuffer = new ArrayList<>(A_INDEX_MAIN_BLOCK_SIZE);
@@ -382,8 +390,8 @@ public class DefaultMessageStoreImpl extends MessageStore {
             int t = tStart;
             while (t < tEnd) {
                 if (t % A_INDEX_MAIN_BLOCK_SIZE == 0 && t + A_INDEX_MAIN_BLOCK_SIZE <= tEnd) {
-                    result = getAvgFromSortedIndex(aMin, aMax, t, t + A_INDEX_MAIN_BLOCK_SIZE - 1, true);
-//                    result = getAvgValueFromAccumIndex(aMin, aMax, t, t + A_INDEX_MAIN_BLOCK_SIZE - 1, true);
+//                    result = getAvgFromSortedIndex(aMin, aMax, t, t + A_INDEX_MAIN_BLOCK_SIZE - 1, true);
+                    result = getAvgValueFromAccumIndex(aMin, aMax, t, t + A_INDEX_MAIN_BLOCK_SIZE - 1, true);
                     t += A_INDEX_MAIN_BLOCK_SIZE;
                 } else {
                     result = getAvgFromSortedIndex(aMin, aMax, t, t + A_INDEX_SUB_BLOCK_SIZE - 1, false);

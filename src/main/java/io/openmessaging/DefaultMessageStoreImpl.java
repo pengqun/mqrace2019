@@ -5,11 +5,10 @@ import org.apache.log4j.Logger;
 
 import java.nio.ByteBuffer;
 import java.util.*;
-import java.util.concurrent.Executor;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
+import java.util.stream.Collectors;
 
 import static io.openmessaging.CommonUtils.createDirectBuffer;
 import static io.openmessaging.Constants.*;
@@ -57,6 +56,8 @@ public class DefaultMessageStoreImpl extends MessageStore {
     private ThreadPoolExecutor dataWriter = (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
     private ThreadPoolExecutor aimIndexWriter = (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
     private ThreadPoolExecutor aisIndexWriter = (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
+
+    private static ForkJoinPool forkJoinPool = new ForkJoinPool(24);
 
     public DefaultMessageStoreImpl() {
         for (int i = 0; i < stageFileList.length; i++) {
@@ -180,11 +181,13 @@ public class DefaultMessageStoreImpl extends MessageStore {
 
             // store a into multiple index
             if (currentT % A_INDEX_MAIN_BLOCK_SIZE == 0) {
-                persistToAIndexFile(aimBuffer, aimIndex, aimIndexWriter, mainIndexFile, false);
+                persistToAIndexFile(aimBuffer, aimIndex, aimIndexWriter, mainIndexFile, true);
+//                persistToAIndexFile(aimBuffer, aimIndex, aimIndexWriter, mainIndexFile, false);
                 aimIndex = 0;
             }
             if (currentT % A_INDEX_SUB_BLOCK_SIZE == 0) {
-                persistToAIndexFile(aisBuffer, aisIndex, aisIndexWriter, subIndexFile, false);
+                persistToAIndexFile(aisBuffer, aisIndex, aisIndexWriter, subIndexFile, true);
+//                persistToAIndexFile(aisBuffer, aisIndex, aisIndexWriter, subIndexFile, false);
                 aisIndex = 0;
             }
         }
@@ -237,24 +240,24 @@ public class DefaultMessageStoreImpl extends MessageStore {
         executor.execute(() -> {
             Arrays.parallelSort(persistBuffer);
             long[] metaIndex = new long[(size - 1) / A_INDEX_META_FACTOR + 1];
-//            long sum = 0;
+            long sum = 0;
             for (int i = 0; i < size; i++) {
                 long a = persistBuffer[i];
-//                if (isAccum) {
-//                    sum += a;
-//                    indexFile.writeA(sum);
-//                } else {
+                if (isAccum) {
+                    sum += a;
+                    indexFile.writeA(sum);
+                } else {
                     indexFile.writeA(a);
-//                }
+                }
                 if (i % A_INDEX_META_FACTOR == 0) {
                     metaIndex[i / A_INDEX_META_FACTOR] = a;
                 }
             }
             indexFile.addMetaIndex(metaIndex);
             indexFile.addRangeMax(persistBuffer[size - 1]);
-//            if (isAccum) {
-//                indexFile.addRangeSum(sum);
-//            }
+            if (isAccum) {
+                indexFile.addRangeSum(sum);
+            }
             pendingTasks.decrementAndGet();
         });
     }
@@ -350,21 +353,50 @@ public class DefaultMessageStoreImpl extends MessageStore {
         return result;
     }
 
+    public class GetAvgValueTask extends RecursiveTask<SumAndCount> {
+        long aMin;
+        long aMax;
+        int tMin;
+        int tMax;
+        int type;
+        boolean isMain;
+
+        GetAvgValueTask(long aMin, long aMax, int tMin, int tMax, int type, boolean isMain) {
+            this.aMin = aMin;
+            this.aMax = aMax;
+            this.tMin = tMin;
+            this.tMax = tMax;
+            this.type = type;
+            this.isMain = isMain;
+        }
+
+        @Override
+        protected SumAndCount compute() {
+            if (type == 0) { // normal
+                return getAvgValueFromDataFile(aMin, aMax, tMin, tMax);
+            } else if (type == 1) { // index
+                return getAvgFromSortedIndex(aMin, aMax, tMin, tMax, isMain);
+            } else { // accum
+                return getAvgValueFromAccumIndex(aMin, aMax, tMin, tMax, isMain);
+            }
+        }
+    }
+
     @Override
     public long getAvgValue(long aMin, long aMax, long tMin, long tMax) {
 //        long avgStart = System.currentTimeMillis();
-//        int avgId = avgCounter.getAndIncrement();
-//        if (avgId == 0) {
-//            PerfStats._getEnd = System.currentTimeMillis();
-//            PerfStats._avgStart = PerfStats._getEnd;
-//        }
+        int avgId = avgCounter.getAndIncrement();
+        if (avgId == 0) {
+            PerfStats._getEnd = System.currentTimeMillis();
+            PerfStats._avgStart = PerfStats._getEnd;
+        }
 //        if (avgId % AVG_SAMPLE_RATE == 0) {
 //            logger.info("getAvgValue - tMin: " + tMin + ", tMax: " + tMax + ", aMin: " + aMin + ", aMax: " + aMax
 //                    + ", tRange: " + (tMax - tMin) + ", avgId: " + avgId);
 //        }
-//        if (avgId == TEST_BOUNDARY) {
-//            PerfStats.printStats(this);
-//        }
+        if (avgId == TEST_BOUNDARY) {
+            PerfStats.printStats(this);
+        }
 
         long sum = 0;
         int count = 0;
@@ -391,38 +423,54 @@ public class DefaultMessageStoreImpl extends MessageStore {
             count += result.getCount();
 
         } else {
+            Collection<GetAvgValueTask> tasks = new ArrayList<>();
+
             // Process head
             if (tMinDiff != tStart) {
-                result = getAvgValueFromDataFile(aMin, aMax, tMinDiff, tStart - 1);
-                sum += result.getSum();
-                count += result.getCount();
+                tasks.add(new GetAvgValueTask(aMin, aMax, tMinDiff, tStart - 1, 0, false));
+//                result = getAvgValueFromDataFile(aMin, aMax, tMinDiff, tStart - 1);
+//                sum += result.getSum();
+//                count += result.getCount();
             }
             // Process tail
             if (tMaxDiff > tEnd - 1) {
-                result = getAvgValueFromDataFile(aMin, aMax, tEnd, tMaxDiff);
-                sum += result.getSum();
-                count += result.getCount();
+                tasks.add(new GetAvgValueTask(aMin, aMax, tEnd, tMaxDiff, 0, false));
+//                result = getAvgValueFromDataFile(aMin, aMax, tEnd, tMaxDiff);
+//                sum += result.getSum();
+//                count += result.getCount();
             }
             // Process middle
             int t = tStart;
             while (t < tEnd) {
                 if (t % A_INDEX_MAIN_BLOCK_SIZE == 0 && t + A_INDEX_MAIN_BLOCK_SIZE <= tEnd) {
-                    result = getAvgFromSortedIndex(aMin, aMax, t, t + A_INDEX_MAIN_BLOCK_SIZE - 1, true);
+//                    result = getAvgFromSortedIndex(aMin, aMax, t, t + A_INDEX_MAIN_BLOCK_SIZE - 1, true);
 //                    result = getAvgValueFromAccumIndex(aMin, aMax, t, t + A_INDEX_MAIN_BLOCK_SIZE - 1, true);
+                    tasks.add(new GetAvgValueTask(aMin, aMax, t, t + A_INDEX_MAIN_BLOCK_SIZE - 1, 2, true));
                     t += A_INDEX_MAIN_BLOCK_SIZE;
                 } else {
-                    result = getAvgFromSortedIndex(aMin, aMax, t, t + A_INDEX_SUB_BLOCK_SIZE - 1, false);
+//                    result = getAvgFromSortedIndex(aMin, aMax, t, t + A_INDEX_SUB_BLOCK_SIZE - 1, false);
+//                    result = getAvgValueFromAccumIndex(aMin, aMax, t, t + A_INDEX_SUB_BLOCK_SIZE - 1, false);
+                    tasks.add(new GetAvgValueTask(aMin, aMax, t, t + A_INDEX_SUB_BLOCK_SIZE - 1, 2, false));
                     t += A_INDEX_SUB_BLOCK_SIZE;
                 }
-                sum += result.getSum();
-                count += result.getCount();
+//                sum += result.getSum();
+//                count += result.getCount();
+            }
+
+            List<SumAndCount> taskResult = tasks.stream().map(task -> forkJoinPool.submit(task))
+                    .map(ForkJoinTask::join)
+                    .collect(Collectors.toList());
+
+            for (SumAndCount sumAndCount : taskResult) {
+                sum += sumAndCount.getSum();
+                count += sumAndCount.getCount();
             }
         }
 
 //        if (avgId % AVG_SAMPLE_RATE == 0) {
 //            logger.info("Got " + count + ", time: " + (System.currentTimeMillis() - avgStart) + ", avgId: " + avgId);
 //        }
-//        avgMsgCounter.addAndGet(count);
+        avgMsgCounter.addAndGet(count);
 
         return count > 0 ? sum / count : 0;
     }

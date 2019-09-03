@@ -104,8 +104,11 @@ public class DefaultMessageStoreImpl extends MessageStore {
         long rewriteStart = System.currentTimeMillis();
         int rewriteCount = 0;
         int currentT = 0;
-        List<Long> amBuffer = new ArrayList<>(A_INDEX_MAIN_BLOCK_SIZE);
-        List<Long> asBuffer = new ArrayList<>(A_INDEX_SUB_BLOCK_SIZE);
+
+        long[] aimBuffer = new long[A_INDEX_MAIN_BLOCK_SIZE * 2048];
+        long[] aisBuffer = new long[A_INDEX_SUB_BLOCK_SIZE * 2048];
+        int aimIndex = 0;
+        int aisIndex = 0;
         AtomicInteger pendingTasks = new AtomicInteger();
 
         tMaxValue = Arrays.stream(stageFileList).mapToLong(StageFile::getLastT).max().orElse(0);
@@ -131,8 +134,8 @@ public class DefaultMessageStoreImpl extends MessageStore {
                     dataFile.writeA(message.getA());
                     dataFile.writeBody(message.getBody());
 
-                    amBuffer.add(message.getA());
-                    asBuffer.add(message.getA());
+                    aimBuffer[aimIndex++] = message.getA();
+                    aisBuffer[aisIndex++] = message.getA();
 
                     if (rewriteCount % REWRITE_SAMPLE_RATE == 0) {
                         logger.info("Write message to data file: " + rewriteCount);
@@ -166,23 +169,22 @@ public class DefaultMessageStoreImpl extends MessageStore {
 
             // sort and store into a index main block
             if (currentT % A_INDEX_MAIN_BLOCK_SIZE == 0) {
-                List<Long> finalAmBuffer = amBuffer;
+                long[] persistAimBuffer = new long[aimIndex];
+                System.arraycopy(aimBuffer, 0, persistAimBuffer, 0, aimIndex);
                 pendingTasks.incrementAndGet();
+                int finalAimIndex = aimIndex;
                 aimIndexWriter.execute(() -> {
-                    int size = finalAmBuffer.size();
-                    if (size > 1) {
-                        Collections.sort(finalAmBuffer);
-                    }
-                    long[] metaIndex = new long[(size - 1) / A_INDEX_META_FACTOR + 1];
-                    for (int i = 0; i < size; i++) {
-                        long a = finalAmBuffer.get(i);
+                    Arrays.parallelSort(persistAimBuffer);
+                    long[] metaIndex = new long[(finalAimIndex - 1) / A_INDEX_META_FACTOR + 1];
+                    for (int i = 0; i < finalAimIndex; i++) {
+                        long a = persistAimBuffer[i];
                         mainIndexFile.writeA(a);
                         if (i % A_INDEX_META_FACTOR == 0) {
                             metaIndex[i / A_INDEX_META_FACTOR] = a;
                         }
                     }
                     mainIndexFile.addMetaIndex(metaIndex);
-                    mainIndexFile.addRangeMax(finalAmBuffer.get(size - 1));
+                    mainIndexFile.addRangeMax(persistAimBuffer[finalAimIndex - 1]);
 
 //                    long sum = 0;
 //                    for (int i = 0; i < size; i++) {
@@ -199,31 +201,30 @@ public class DefaultMessageStoreImpl extends MessageStore {
 
                     pendingTasks.decrementAndGet();
                 });
-                amBuffer = new ArrayList<>(A_INDEX_MAIN_BLOCK_SIZE);
+                aimIndex = 0;
             }
 
             // sort and store into a index sub block
             if (currentT % A_INDEX_SUB_BLOCK_SIZE == 0) {
-                List<Long> finalAsBuffer = asBuffer;
+                long[] persistAisBuffer = new long[aisIndex];
+                System.arraycopy(aisBuffer, 0, persistAisBuffer, 0, aisIndex);
                 pendingTasks.incrementAndGet();
+                int finalAisIndex = aisIndex;
                 aisIndexWriter.execute(() -> {
-                    int size = finalAsBuffer.size();
-                    if (size > 1) {
-                        Collections.sort(finalAsBuffer);
-                    }
-                    long[] metaIndex = new long[(size - 1) / A_INDEX_META_FACTOR + 1];
-                    for (int i = 0; i < size; i++) {
-                        long a = finalAsBuffer.get(i);
+                    Arrays.parallelSort(persistAisBuffer);
+                    long[] metaIndex = new long[(finalAisIndex - 1) / A_INDEX_META_FACTOR + 1];
+                    for (int i = 0; i < finalAisIndex; i++) {
+                        long a = persistAisBuffer[i];
                         subIndexFile.writeA(a);
                         if (i % A_INDEX_META_FACTOR == 0) {
                             metaIndex[i / A_INDEX_META_FACTOR] = a;
                         }
                     }
                     subIndexFile.addMetaIndex(metaIndex);
-                    subIndexFile.addRangeMax(finalAsBuffer.get(size - 1));
+                    subIndexFile.addRangeMax(persistAisBuffer[finalAisIndex - 1]);
                     pendingTasks.decrementAndGet();
                 });
-                asBuffer = new ArrayList<>(A_INDEX_SUB_BLOCK_SIZE);
+                aisIndex = 0;
             }
         }
 

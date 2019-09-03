@@ -57,7 +57,8 @@ public class DefaultMessageStoreImpl extends MessageStore {
     private ThreadPoolExecutor aimIndexWriter = (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
     private ThreadPoolExecutor aisIndexWriter = (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
 
-    private ForkJoinPool forkJoinPool = new ForkJoinPool(32);
+//    private ForkJoinPool forkJoinPool = new ForkJoinPool(32);
+    private ForkJoinPool forkJoinPool = ForkJoinPool.commonPool();
 
     public DefaultMessageStoreImpl() {
         for (int i = 0; i < stageFileList.length; i++) {

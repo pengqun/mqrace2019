@@ -17,8 +17,8 @@ class IndexFile {
     private static int index = 0;
     private FileChannel aiChannel;
     private List<long[]> metaIndexList = new ArrayList<>();
-    private List<Long> rangeMaxList = new ArrayList<>();
     private List<Long> rangeSumList = new ArrayList<>();
+    private List<ByteBuffer> cacheBufferList = new ArrayList<>();
     private ByteBuffer aiBufferForWrite = ByteBuffer.allocateDirect(WRITE_AI_BUFFER_SIZE);
 
     IndexFile() {
@@ -51,19 +51,20 @@ class IndexFile {
         return metaIndexList.get(index);
     }
 
-    long getRangeMax(int index) {
-        return rangeMaxList.get(index);
-    }
-
-    void addRangeMax(long rangeMax) {
-        rangeMaxList.add(rangeMax);
-    }
-
     long getRangeSum(int index) {
         return rangeSumList.get(index);
     }
 
     void addRangeSum(long rangeSum) {
         rangeSumList.add(rangeSum);
+    }
+
+    ByteBuffer getCacheBuffer(int index) {
+        return cacheBufferList.get(index);
+    }
+
+    void addCacheBuffer(ByteBuffer byteBuffer) {
+        byteBuffer.flip();
+        cacheBufferList.add(byteBuffer);
     }
 }

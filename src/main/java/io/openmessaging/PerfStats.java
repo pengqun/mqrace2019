@@ -2,6 +2,7 @@ package io.openmessaging;
 
 import org.apache.log4j.Logger;
 
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -24,6 +25,9 @@ class PerfStats {
     static long _getEnd = 0;
     static long _avgStart = 0;
 
+    static AtomicInteger cacheHit = new AtomicInteger();
+    static AtomicInteger cacheMiss = new AtomicInteger();
+
     static void printStats(DefaultMessageStoreImpl messageStore) {
         long putDuration = _putEnd - _putStart;
         long getDuration = _getEnd - _getStart;
@@ -33,6 +37,10 @@ class PerfStats {
         int avgScore = (int) (avgMsgCounter.get() / avgDuration);
         int totalScore = putScore + getScore + avgScore;
 
+        logger.info("Cache result: \n"
+                + "\thit: " + cacheHit + ", " + ", miss: " + cacheMiss + "\n"
+                + "\tratio: " + (double) cacheHit.get() / (cacheHit.get() + cacheMiss.get()) + "\n"
+        );
         logger.info("Test result: \n"
                 + "\tput: " + messageStore.getPutCounter().get() + " / " + putDuration + "ms = " + putScore + "\n"
                 + "\tget: " + getMsgCounter.get() + " / " + getDuration + "ms = " + getScore + "\n"

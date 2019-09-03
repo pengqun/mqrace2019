@@ -57,8 +57,7 @@ public class DefaultMessageStoreImpl extends MessageStore {
     private ThreadPoolExecutor aimIndexWriter = (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
     private ThreadPoolExecutor aisIndexWriter = (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
 
-    private ThreadLocal<ForkJoinPool> threadForkJoinPool =  ThreadLocal.withInitial(()
-            -> new ForkJoinPool(4));
+    private ForkJoinPool forkJoinPool = new ForkJoinPool(32);
 
     public DefaultMessageStoreImpl() {
         for (int i = 0; i < stageFileList.length; i++) {
@@ -182,13 +181,13 @@ public class DefaultMessageStoreImpl extends MessageStore {
 
             // store a into multiple index
             if (currentT % A_INDEX_MAIN_BLOCK_SIZE == 0) {
-//                persistToAIndexFile(aimBuffer, aimIndex, aimIndexWriter, mainIndexFile, true);
-                persistToAIndexFile(aimBuffer, aimIndex, aimIndexWriter, mainIndexFile, false);
+                persistToAIndexFile(aimBuffer, aimIndex, aimIndexWriter, mainIndexFile, USE_ACCUMULATED_SUM);
+//                persistToAIndexFile(aimBuffer, aimIndex, aimIndexWriter, mainIndexFile, false);
                 aimIndex = 0;
             }
             if (currentT % A_INDEX_SUB_BLOCK_SIZE == 0) {
-//                persistToAIndexFile(aisBuffer, aisIndex, aisIndexWriter, subIndexFile, true);
-                persistToAIndexFile(aisBuffer, aisIndex, aisIndexWriter, subIndexFile, false);
+                persistToAIndexFile(aisBuffer, aisIndex, aisIndexWriter, subIndexFile, USE_ACCUMULATED_SUM);
+//                persistToAIndexFile(aisBuffer, aisIndex, aisIndexWriter, subIndexFile, false);
                 aisIndex = 0;
             }
         }
@@ -240,7 +239,8 @@ public class DefaultMessageStoreImpl extends MessageStore {
 
         executor.execute(() -> {
             Arrays.parallelSort(persistBuffer);
-            long[] metaIndex = new long[(size - 1) / A_INDEX_META_FACTOR + 1];
+            long[] metaIndex = new long[(size - 1) / A_INDEX_META_FACTOR + 1 + 1];
+            ByteBuffer byteBuffer = ByteBuffer.allocateDirect(metaIndex.length * A_INDEX_CACHE_LENGTH * KEY_A_BYTE_LENGTH);
             long sum = 0;
             for (int i = 0; i < size; i++) {
                 long a = persistBuffer[i];
@@ -253,11 +253,15 @@ public class DefaultMessageStoreImpl extends MessageStore {
                 if (i % A_INDEX_META_FACTOR == 0) {
                     metaIndex[i / A_INDEX_META_FACTOR] = a;
                 }
+                if (isAccum && i % A_INDEX_META_FACTOR < A_INDEX_CACHE_LENGTH) {
+                    byteBuffer.putLong(sum);
+                }
             }
+            metaIndex[metaIndex.length - 1] = persistBuffer[size - 1];
             indexFile.addMetaIndex(metaIndex);
-            indexFile.addRangeMax(persistBuffer[size - 1]);
             if (isAccum) {
                 indexFile.addRangeSum(sum);
+                indexFile.addCacheBuffer(byteBuffer);
             }
             pendingTasks.decrementAndGet();
         });
@@ -375,11 +379,11 @@ public class DefaultMessageStoreImpl extends MessageStore {
         protected SumAndCount compute() {
             if (type == 0) { // normal
                 return getAvgValueFromDataFile(aMin, aMax, tMin, tMax);
-            } else if (type == 1) { // index
-                return getAvgFromSortedIndex(aMin, aMax, tMin, tMax, isMain);
-            } else { // accum
+            }
+            if (USE_ACCUMULATED_SUM) {
                 return getAvgValueFromAccumIndex(aMin, aMax, tMin, tMax, isMain);
             }
+            return getAvgFromSortedIndex(aMin, aMax, tMin, tMax, isMain);
         }
     }
 
@@ -424,49 +428,68 @@ public class DefaultMessageStoreImpl extends MessageStore {
             count += result.getCount();
 
         } else {
-            Collection<GetAvgValueTask> tasks = new ArrayList<>();
-
-            // Process head
-            if (tMinDiff != tStart) {
-                tasks.add(new GetAvgValueTask(aMin, aMax, tMinDiff, tStart - 1, 0, false));
-//                result = getAvgValueFromDataFile(aMin, aMax, tMinDiff, tStart - 1);
-//                sum += result.getSum();
-//                count += result.getCount();
-            }
-            // Process tail
-            if (tMaxDiff > tEnd - 1) {
-                tasks.add(new GetAvgValueTask(aMin, aMax, tEnd, tMaxDiff, 0, false));
-//                result = getAvgValueFromDataFile(aMin, aMax, tEnd, tMaxDiff);
-//                sum += result.getSum();
-//                count += result.getCount();
-            }
-            // Process middle
-            int t = tStart;
-            while (t < tEnd) {
-                if (t % A_INDEX_MAIN_BLOCK_SIZE == 0 && t + A_INDEX_MAIN_BLOCK_SIZE <= tEnd) {
-//                    result = getAvgFromSortedIndex(aMin, aMax, t, t + A_INDEX_MAIN_BLOCK_SIZE - 1, true);
-//                    result = getAvgValueFromAccumIndex(aMin, aMax, t, t + A_INDEX_MAIN_BLOCK_SIZE - 1, true);
-                    tasks.add(new GetAvgValueTask(aMin, aMax, t, t + A_INDEX_MAIN_BLOCK_SIZE - 1, 1, true));
-                    t += A_INDEX_MAIN_BLOCK_SIZE;
-                } else {
-//                    result = getAvgFromSortedIndex(aMin, aMax, t, t + A_INDEX_SUB_BLOCK_SIZE - 1, false);
-//                    result = getAvgValueFromAccumIndex(aMin, aMax, t, t + A_INDEX_SUB_BLOCK_SIZE - 1, false);
-                    tasks.add(new GetAvgValueTask(aMin, aMax, t, t + A_INDEX_SUB_BLOCK_SIZE - 1, 1, false));
-                    t += A_INDEX_SUB_BLOCK_SIZE;
+            if (USE_FORK_JOIN_POOL) {
+                Collection<GetAvgValueTask> tasks = new ArrayList<>();
+                // Process head
+                if (tMinDiff != tStart) {
+                    tasks.add(new GetAvgValueTask(aMin, aMax, tMinDiff, tStart - 1, 0, false));
                 }
-//                sum += result.getSum();
-//                count += result.getCount();
-            }
-
-            ForkJoinPool forkJoinPool = threadForkJoinPool.get();
-
-            List<SumAndCount> taskResult = tasks.stream().map(forkJoinPool::submit)
-                    .map(ForkJoinTask::join)
-                    .collect(Collectors.toList());
-
-            for (SumAndCount sumAndCount : taskResult) {
-                sum += sumAndCount.getSum();
-                count += sumAndCount.getCount();
+                // Process tail
+                if (tMaxDiff > tEnd - 1) {
+                    tasks.add(new GetAvgValueTask(aMin, aMax, tEnd, tMaxDiff, 0, false));
+                }
+                // Process middle
+                int t = tStart;
+                while (t < tEnd) {
+                    if (t % A_INDEX_MAIN_BLOCK_SIZE == 0 && t + A_INDEX_MAIN_BLOCK_SIZE <= tEnd) {
+                        tasks.add(new GetAvgValueTask(aMin, aMax, t, t + A_INDEX_MAIN_BLOCK_SIZE - 1, 1, true));
+                        t += A_INDEX_MAIN_BLOCK_SIZE;
+                    } else {
+                        tasks.add(new GetAvgValueTask(aMin, aMax, t, t + A_INDEX_SUB_BLOCK_SIZE - 1, 1, false));
+                        t += A_INDEX_SUB_BLOCK_SIZE;
+                    }
+                }
+                List<SumAndCount> taskResult = tasks.stream().map(forkJoinPool::submit)
+                        .map(ForkJoinTask::join)
+                        .collect(Collectors.toList());
+                for (SumAndCount sumAndCount : taskResult) {
+                    sum += sumAndCount.getSum();
+                    count += sumAndCount.getCount();
+                }
+            } else {
+                // Process head
+                if (tMinDiff != tStart) {
+                    result = getAvgValueFromDataFile(aMin, aMax, tMinDiff, tStart - 1);
+                    sum += result.getSum();
+                    count += result.getCount();
+                }
+                // Process tail
+                if (tMaxDiff > tEnd - 1) {
+                    result = getAvgValueFromDataFile(aMin, aMax, tEnd, tMaxDiff);
+                    sum += result.getSum();
+                    count += result.getCount();
+                }
+                // Process middle
+                int t = tStart;
+                while (t < tEnd) {
+                    if (t % A_INDEX_MAIN_BLOCK_SIZE == 0 && t + A_INDEX_MAIN_BLOCK_SIZE <= tEnd) {
+                        if (USE_ACCUMULATED_SUM) {
+                            result = getAvgValueFromAccumIndex(aMin, aMax, t, t + A_INDEX_MAIN_BLOCK_SIZE - 1, true);
+                        } else {
+                            result = getAvgFromSortedIndex(aMin, aMax, t, t + A_INDEX_MAIN_BLOCK_SIZE - 1, true);
+                        }
+                        t += A_INDEX_MAIN_BLOCK_SIZE;
+                    } else {
+                        if (USE_ACCUMULATED_SUM) {
+                            result = getAvgValueFromAccumIndex(aMin, aMax, t, t + A_INDEX_SUB_BLOCK_SIZE - 1, false);
+                        } else {
+                            result = getAvgFromSortedIndex(aMin, aMax, t, t + A_INDEX_SUB_BLOCK_SIZE - 1, false);
+                        }
+                        t += A_INDEX_SUB_BLOCK_SIZE;
+                    }
+                sum += result.getSum();
+                count += result.getCount();
+                }
             }
         }
 
@@ -521,7 +544,7 @@ public class DefaultMessageStoreImpl extends MessageStore {
 
         long[] metaIndex = indexFile.getMetaIndex(tMin / blockSize);
         long rangeMin = metaIndex[0];
-        long rangeMax = indexFile.getRangeMax(tMin / blockSize);
+        long rangeMax = metaIndex[metaIndex.length - 1];
 
         if (rangeMin > aMax) {
             return new SumAndCount(0, 0);
@@ -598,7 +621,7 @@ public class DefaultMessageStoreImpl extends MessageStore {
 
         long[] metaIndex = indexFile.getMetaIndex(tMin / blockSize);
         long rangeMin = metaIndex[0];
-        long rangeMax = indexFile.getRangeMax(tMin / blockSize);
+        long rangeMax = metaIndex[metaIndex.length - 1];
         long rangeSum = indexFile.getRangeSum(tMin / blockSize);
 
         if (aMax < rangeMin) {
@@ -621,6 +644,9 @@ public class DefaultMessageStoreImpl extends MessageStore {
         long realStartOffset = -1;
         long realEndOffset = -1;
 
+        long startPos = 0;
+        long endPos = 0;
+
         int start = 0;
         if (aMin > rangeMin) {
             // binary search for start offset which < aMin
@@ -635,22 +661,24 @@ public class DefaultMessageStoreImpl extends MessageStore {
             }
             start = Math.max(start - 1, 0);
             startOffset += start * A_INDEX_META_FACTOR;
+            startPos = start;
         } else {
             realStartOffset = fullStartOffset;
         }
 
         if (aMax < rangeMax) {
-            // binary search for end offset (<= aMax)
+            // binary search for end offset (> aMax)
             int end = metaIndex.length - 1;
-            while (start < end - 1) {
+            while (start < end) {
                 int index = (start + end) / 2;
                 if (metaIndex[index] <= aMax) {
-                    start = index;
+                    start = index + 1;
                 } else {
-                    end = index - 1;
+                    end = index;
                 }
             }
-            endOffset = fullStartOffset + start * A_INDEX_META_FACTOR;
+            endOffset = fullStartOffset + (end - 1) * A_INDEX_META_FACTOR;
+            endPos = end - 1;
         } else {
             realEndOffset = fullEndOffset;
         }
@@ -658,15 +686,29 @@ public class DefaultMessageStoreImpl extends MessageStore {
         long startPrevSum = 0;
         long endSum = rangeSum;
 
+        ByteBuffer cacheBuffer = indexFile.getCacheBuffer(tMin / blockSize);
+
         // need to find real first offset
         if (realStartOffset < 0) {
             aiByteBufferForRead.flip();
             long prevSum = 0;
+            boolean diskRead = false;
             for (long offset = startOffset; offset < fullEndOffset; offset++) {
-                if (aiByteBufferForRead.remaining() == 0) {
-                    indexFile.fillReadAIBuffer(aiByteBufferForRead, offset, fullEndOffset);
+                long aSum;
+                if (offset - startOffset < A_INDEX_CACHE_LENGTH) {
+                    aSum = cacheBuffer.getLong((int) ((startPos * A_INDEX_CACHE_LENGTH + offset - startOffset) * KEY_A_BYTE_LENGTH));
+                } else {
+                    if (offset == startOffset + A_INDEX_META_FACTOR) {
+                        realStartOffset = offset;
+                        startPrevSum = prevSum;
+                        break;
+                    }
+                    if (aiByteBufferForRead.remaining() == 0) {
+                        indexFile.fillReadAIBuffer(aiByteBufferForRead, offset, fullEndOffset);
+                        diskRead = true;
+                    }
+                    aSum = aiByteBufferForRead.getLong();
                 }
-                long aSum = aiByteBufferForRead.getLong();
                 // first one should not be in range (< aMin)
                 if (offset > startOffset) {
                     long a = aSum - prevSum;
@@ -678,6 +720,11 @@ public class DefaultMessageStoreImpl extends MessageStore {
                 }
                 prevSum = aSum;
             }
+            if (diskRead) {
+                cacheMiss.incrementAndGet();
+            } else {
+                cacheHit.incrementAndGet();
+            }
             aiByteBufferForRead.clear();
         }
 
@@ -685,11 +732,23 @@ public class DefaultMessageStoreImpl extends MessageStore {
         if (realEndOffset < 0) {
             aiByteBufferForRead.flip();
             long prevSum = 0;
+            boolean diskRead = false;
             for (long offset = endOffset; offset < fullEndOffset; offset++) {
-                if (aiByteBufferForRead.remaining() == 0) {
-                    indexFile.fillReadAIBuffer(aiByteBufferForRead, offset, fullEndOffset);
+                long aSum;
+                if (offset - endOffset < A_INDEX_CACHE_LENGTH) {
+                    aSum = cacheBuffer.getLong((int) ((endPos * A_INDEX_CACHE_LENGTH + offset - endOffset) * KEY_A_BYTE_LENGTH));
+                } else {
+                    if (offset == endOffset + A_INDEX_META_FACTOR) {
+                        realEndOffset = offset;
+                        endSum = prevSum;
+                        break;
+                    }
+                    if (aiByteBufferForRead.remaining() == 0) {
+                        indexFile.fillReadAIBuffer(aiByteBufferForRead, offset, fullEndOffset);
+                        diskRead = true;
+                    }
+                    aSum = aiByteBufferForRead.getLong();
                 }
-                long aSum = aiByteBufferForRead.getLong();
                 // first one should not be in range (<= aMax)
                 if (offset > endOffset) {
                     long a = aSum - prevSum;
@@ -700,6 +759,11 @@ public class DefaultMessageStoreImpl extends MessageStore {
                     }
                 }
                 prevSum = aSum;
+            }
+            if (diskRead) {
+                cacheMiss.incrementAndGet();
+            } else {
+                cacheHit.incrementAndGet();
             }
             aiByteBufferForRead.clear();
         }

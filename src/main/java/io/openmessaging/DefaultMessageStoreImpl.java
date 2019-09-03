@@ -57,7 +57,8 @@ public class DefaultMessageStoreImpl extends MessageStore {
     private ThreadPoolExecutor aimIndexWriter = (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
     private ThreadPoolExecutor aisIndexWriter = (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
 
-    private static ForkJoinPool forkJoinPool = new ForkJoinPool(24);
+    private ThreadLocal<ForkJoinPool> threadForkJoinPool =  ThreadLocal.withInitial(()
+            -> new ForkJoinPool(4));
 
     public DefaultMessageStoreImpl() {
         for (int i = 0; i < stageFileList.length; i++) {
@@ -457,7 +458,9 @@ public class DefaultMessageStoreImpl extends MessageStore {
 //                count += result.getCount();
             }
 
-            List<SumAndCount> taskResult = tasks.stream().map(task -> forkJoinPool.submit(task))
+            ForkJoinPool forkJoinPool = threadForkJoinPool.get();
+
+            List<SumAndCount> taskResult = tasks.stream().map(forkJoinPool::submit)
                     .map(ForkJoinTask::join)
                     .collect(Collectors.toList());
 

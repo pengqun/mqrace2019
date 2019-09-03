@@ -52,6 +52,7 @@ public class DefaultMessageStoreImpl extends MessageStore {
     private ThreadLocal<ByteBuffer> threadBufferForReadAIS = createDirectBuffer(READ_AIS_BUFFER_SIZE);
     private ThreadLocal<ByteBuffer> threadBufferForReadBody = createDirectBuffer(READ_BODY_BUFFER_SIZE);
 
+    private ThreadPoolExecutor dataWriter = (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
     private ThreadPoolExecutor aimIndexWriter = (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
     private ThreadPoolExecutor aisIndexWriter = (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
 
@@ -104,9 +105,10 @@ public class DefaultMessageStoreImpl extends MessageStore {
         long rewriteStart = System.currentTimeMillis();
         int rewriteCount = 0;
         int currentT = 0;
-
+        Message[] dataBuffer = new Message[8 * 1024];
         long[] aimBuffer = new long[A_INDEX_MAIN_BLOCK_SIZE * 2048];
         long[] aisBuffer = new long[A_INDEX_SUB_BLOCK_SIZE * 2048];
+        int dataIndex = 0;
         int aimIndex = 0;
         int aisIndex = 0;
         AtomicInteger pendingTasks = new AtomicInteger();
@@ -131,8 +133,24 @@ public class DefaultMessageStoreImpl extends MessageStore {
                 Message head;
                 while ((head = stageFile.peekMessage()) != null && head.getT() == currentT + tBase) {
                     Message message = stageFile.consumePeeked();
-                    dataFile.writeA(message.getA());
-                    dataFile.writeBody(message.getBody());
+
+                    dataBuffer[dataIndex++] = message;
+
+                    if (dataIndex == dataBuffer.length) {
+                        Message[] persistDataBuffer = new Message[dataIndex];
+                        System.arraycopy(dataBuffer, 0, persistDataBuffer, 0, dataIndex);
+                        pendingTasks.incrementAndGet();
+                        int finalDataIndex = dataIndex;
+                        dataWriter.execute(() -> {
+                            for (int i = 0; i < finalDataIndex; i++) {
+                                Message m = persistDataBuffer[i];
+                                dataFile.writeA(m.getA());
+                                dataFile.writeBody(m.getBody());
+                            }
+                            pendingTasks.decrementAndGet();
+                        });
+                        dataIndex = 0;
+                    }
 
                     aimBuffer[aimIndex++] = message.getA();
                     aisBuffer[aisIndex++] = message.getA();
@@ -141,6 +159,10 @@ public class DefaultMessageStoreImpl extends MessageStore {
                         logger.info("Write message to data file: " + rewriteCount);
                     }
                     if (rewriteCount == 200_000_000) {
+                        while (pendingTasks.get() > 0) {
+                            logger.info("Waiting for a main/sub index file writer to finish");
+                            LockSupport.parkNanos(10_000_000);
+                        }
                         throw new RuntimeException("" + (System.currentTimeMillis() - rewriteStart) + ", " + rewriteCount);
                     }
                     rewriteCount++;
@@ -232,6 +254,12 @@ public class DefaultMessageStoreImpl extends MessageStore {
             logger.info("Waiting for a main/sub index file writer to finish");
             LockSupport.parkNanos(10_000_000);
         }
+        for (int i = 0; i < dataIndex; i++) {
+            Message m = dataBuffer[i];
+            dataFile.writeA(m.getA());
+            dataFile.writeBody(m.getBody());
+        }
+        dataWriter.shutdown();
         aimIndexWriter.shutdown();
         aisIndexWriter.shutdown();
         logger.info("All a index file writer has finished");

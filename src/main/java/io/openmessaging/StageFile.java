@@ -29,7 +29,6 @@ class StageFile {
 
     private long readOffset = 0;
     private Message peeked = null;
-    private byte[] bodyContainer = new byte[BODY_BYTE_LENGTH];
     private boolean doneRead = false;
 
     StageFile(int index) {
@@ -103,9 +102,11 @@ class StageFile {
         long t = prevT + tDiff;
         prevT = t;
         long a = byteBufferForRead.getLong();
-        byteBufferForRead.get(bodyContainer);
 
-        peeked = new Message(a, t, bodyContainer);
+        byte[] body= new byte[BODY_BYTE_LENGTH];
+        byteBufferForRead.get(body);
+
+        peeked = new Message(a, t, body);
         return peeked;
     }
 

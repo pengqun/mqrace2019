@@ -15,7 +15,7 @@ class Constants {
 
     static final int T_INDEX_SUMMARY_FACTOR = 64;
 
-    static final int A_INDEX_MAIN_BLOCK_SIZE = 1024 * 9;
+    static final int A_INDEX_MAIN_BLOCK_SIZE = 1024 * 12;
     static final int A_INDEX_SUB_BLOCK_SIZE = 1024 * 3;
     static final int A_INDEX_META_FACTOR = 32;
 

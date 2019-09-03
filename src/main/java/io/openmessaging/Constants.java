@@ -27,8 +27,8 @@ class Constants {
     static final int READ_A2_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024 * 16;
 
     static final int WRITE_AI_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024;
-    static final int READ_AIM_BUFFER_SIZE = KEY_A_BYTE_LENGTH * A_INDEX_META_FACTOR;
-//    static final int READ_AIM_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024 * 16;
+//    static final int READ_AIM_BUFFER_SIZE = KEY_A_BYTE_LENGTH * A_INDEX_META_FACTOR;
+    static final int READ_AIM_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024 * 16;
     static final int READ_AIS_BUFFER_SIZE = KEY_A_BYTE_LENGTH * 1024 * 16;
 
     static final int WRITE_BODY_BUFFER_SIZE = BODY_BYTE_LENGTH * 1024;

@@ -36,6 +36,7 @@ public class DefaultMessageStoreImpl extends MessageStore {
     private short[] tIndex = null;
     private int[] tIndexSummary = null;
     private Map<Integer, Integer> tIndexOverflow = new HashMap<>();
+
     private volatile long tBase = -1;
     private long tMaxValue = Long.MIN_VALUE;
     private volatile boolean rewriteDone = false;
@@ -133,12 +134,12 @@ public class DefaultMessageStoreImpl extends MessageStore {
                     amBuffer.add(message.getA());
                     asBuffer.add(message.getA());
 
-//                    if (rewriteCount % REWRITE_SAMPLE_RATE == 0) {
-//                        logger.info("Write message to data file: " + rewriteCount);
-//                    }
-//                    if (putCounter == 200_000_000) {
-//                        throw new RuntimeException("" + (System.currentTimeMillis() - rewriteStart) + ", " + putCounter);
-//                    }
+                    if (rewriteCount % REWRITE_SAMPLE_RATE == 0) {
+                        logger.info("Write message to data file: " + rewriteCount);
+                    }
+                    if (rewriteCount == 200_000_000) {
+                        throw new RuntimeException("" + (System.currentTimeMillis() - rewriteStart) + ", " + rewriteCount);
+                    }
                     rewriteCount++;
                     repeatCount++;
                 }
@@ -173,27 +174,29 @@ public class DefaultMessageStoreImpl extends MessageStore {
                         Collections.sort(finalAmBuffer);
                     }
                     long[] metaIndex = new long[(size - 1) / A_INDEX_META_FACTOR + 1];
-//                    for (int i = 0; i < size; i++) {
-//                        long a = finalAmBuffer.get(i);
-//                        mainIndexFile.writeA(a);
-//                        if (i % A_INDEX_META_FACTOR == 0) {
-//                            metaIndex[i / A_INDEX_META_FACTOR] = a;
-//                        }
-//                    }
-//                    mainIndexFile.addMetaIndex(metaIndex);
-//                    mainIndexFile.addRangeMax(finalAmBuffer.get(size - 1));
-                    long sum = 0;
                     for (int i = 0; i < size; i++) {
                         long a = finalAmBuffer.get(i);
-                        sum += a;
-                        mainIndexFile.writeA(sum);
+                        mainIndexFile.writeA(a);
                         if (i % A_INDEX_META_FACTOR == 0) {
                             metaIndex[i / A_INDEX_META_FACTOR] = a;
                         }
                     }
                     mainIndexFile.addMetaIndex(metaIndex);
                     mainIndexFile.addRangeMax(finalAmBuffer.get(size - 1));
-                    mainIndexFile.addRangeSum(sum);
+
+//                    long sum = 0;
+//                    for (int i = 0; i < size; i++) {
+//                        long a = finalAmBuffer.get(i);
+//                        sum += a;
+//                        mainIndexFile.writeA(sum);
+//                        if (i % A_INDEX_META_FACTOR == 0) {
+//                            metaIndex[i / A_INDEX_META_FACTOR] = a;
+//                        }
+//                    }
+//                    mainIndexFile.addMetaIndex(metaIndex);
+//                    mainIndexFile.addRangeMax(finalAmBuffer.get(size - 1));
+//                    mainIndexFile.addRangeSum(sum);
+
                     pendingTasks.decrementAndGet();
                 });
                 amBuffer = new ArrayList<>(A_INDEX_MAIN_BLOCK_SIZE);
@@ -286,9 +289,10 @@ public class DefaultMessageStoreImpl extends MessageStore {
             }
         }
 
+        tMin = Math.max(tMin, tBase);
         tMax = Math.min(tMax, tMaxValue);
 
-        ArrayList<Message> result = new ArrayList<>();
+        ArrayList<Message> result = new ArrayList<>(1024);
         int tDiff = (int) (tMin - tBase);
         long offset = getOffsetByTDiff(tDiff);
         long endOffset = getOffsetByTDiff((int) (tMax - tBase + 1));
@@ -390,8 +394,8 @@ public class DefaultMessageStoreImpl extends MessageStore {
             int t = tStart;
             while (t < tEnd) {
                 if (t % A_INDEX_MAIN_BLOCK_SIZE == 0 && t + A_INDEX_MAIN_BLOCK_SIZE <= tEnd) {
-//                    result = getAvgFromSortedIndex(aMin, aMax, t, t + A_INDEX_MAIN_BLOCK_SIZE - 1, true);
-                    result = getAvgValueFromAccumIndex(aMin, aMax, t, t + A_INDEX_MAIN_BLOCK_SIZE - 1, true);
+                    result = getAvgFromSortedIndex(aMin, aMax, t, t + A_INDEX_MAIN_BLOCK_SIZE - 1, true);
+//                    result = getAvgValueFromAccumIndex(aMin, aMax, t, t + A_INDEX_MAIN_BLOCK_SIZE - 1, true);
                     t += A_INDEX_MAIN_BLOCK_SIZE;
                 } else {
                     result = getAvgFromSortedIndex(aMin, aMax, t, t + A_INDEX_SUB_BLOCK_SIZE - 1, false);

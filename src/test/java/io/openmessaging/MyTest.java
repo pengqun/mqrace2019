@@ -3,7 +3,7 @@ package io.openmessaging;
 import java.nio.ByteBuffer;
 
 /**
- * @author .ignore 2019/8/25
+ * @author pengqun.pq
  */
 public class MyTest {
 
@@ -12,13 +12,13 @@ public class MyTest {
             {1, 2, 2}
     };
 
-    public static void main(String args[]) throws Exception {
-//        for (int i = 0; i < data.length; i++) {
-//            for (int j = 0; j < data[i].length; j++) {
-//                System.out.print(data[i][j] + " ");
-//            }
-//            System.out.println("");
-//        }
+    public static void main(String args[]) {
+        for (int i = 0; i < data.length; i++) {
+            for (int j = 0; j < data[i].length; j++) {
+                System.out.print(data[i][j] + " ");
+            }
+            System.out.println("");
+        }
 
         ByteBuffer byteBuffer = ByteBuffer.allocateDirect(10240);
 

@@ -14,19 +14,15 @@ import static io.openmessaging.Constants.*;
  * @author pengqun.pq
  */
 class StageFile {
+    private static final int MAX_UNSIGNED_BYTE = 255;
+
     private FileChannel fileChannel;
     private ByteBuffer byteBufferForWrite = ByteBuffer.allocateDirect(WRITE_STAGE_BUFFER_SIZE);
     private ByteBuffer byteBufferForRead = ByteBuffer.allocateDirect(READ_STAGE_BUFFER_SIZE);
-
-    private long lastT = 0;
-    private long prevT = 0;
-
-//    private byte[] tList = new byte[(int) (Integer.MAX_VALUE / PRODUCER_THREAD_NUM * 1.2)];
-//    private int tListIndex = 0;
-
     private List<Long> overflowList = new ArrayList<>();
     private int overflowIndex = 0;
-
+    private long lastT = 0;
+    private long prevT = 0;
     private long readOffset = 0;
     private Message peeked = null;
     private boolean doneRead = false;
@@ -46,12 +42,10 @@ class StageFile {
             flushBuffer();
         }
         long tDiff = message.getT() - lastT;
-        if (tDiff < 255) {
+        if (tDiff < MAX_UNSIGNED_BYTE) {
             byteBufferForWrite.put((byte) tDiff);
-//            tList[tListIndex++] = (byte) tDiff;
         } else {
-            byteBufferForWrite.put((byte) 255);
-//            tList[tListIndex++] = (byte) 255;
+            byteBufferForWrite.put((byte) MAX_UNSIGNED_BYTE);
             overflowList.add(tDiff);
         }
         lastT = message.getT();
@@ -96,7 +90,7 @@ class StageFile {
             }
         }
         long tDiff = byteBufferForRead.get() & 0xff;
-        if (tDiff == 255) {
+        if (tDiff == MAX_UNSIGNED_BYTE) {
             tDiff = overflowList.get(overflowIndex++);
         }
         long t = prevT + tDiff;

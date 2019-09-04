@@ -13,7 +13,6 @@ import java.util.concurrent.locks.LockSupport;
 
 import static io.openmessaging.CommonUtils.createDirectBuffer;
 import static io.openmessaging.Constants.*;
-import static io.openmessaging.PerfStats.*;
 
 /**
  * @author pengqun.pq
@@ -22,14 +21,7 @@ public class DefaultMessageStoreImpl extends MessageStore {
 
     private static final Logger logger = Logger.getLogger(DefaultMessageStoreImpl.class);
 
-    static {
-        logger.info("LsmMessageStoreImpl class loaded");
-    }
-
     private AtomicInteger putCounter = new AtomicInteger();
-    private AtomicInteger getCounter = new AtomicInteger();
-    private AtomicInteger avgCounter = new AtomicInteger();
-
     private AtomicInteger threadIdCounter = new AtomicInteger();
     private ThreadLocal<Integer> threadIdHolder = ThreadLocal.withInitial(() -> threadIdCounter.getAndIncrement());
     private long[] threadMinT = new long[PRODUCER_THREAD_NUM];
@@ -47,16 +39,19 @@ public class DefaultMessageStoreImpl extends MessageStore {
     private DataFile dataFile = new DataFile();
     private IndexFile mainIndexFile = new IndexFile();
     private IndexFile subIndexFile = new IndexFile();
+    private IndexFile level3IndexFile = new IndexFile();
 
     private ThreadLocal<ByteBuffer> threadBufferForReadA1 = createDirectBuffer(READ_A1_BUFFER_SIZE);
     private ThreadLocal<ByteBuffer> threadBufferForReadA2 = createDirectBuffer(READ_A2_BUFFER_SIZE);
     private ThreadLocal<ByteBuffer> threadBufferForReadAIM = createDirectBuffer(READ_AIM_BUFFER_SIZE);
     private ThreadLocal<ByteBuffer> threadBufferForReadAIS = createDirectBuffer(READ_AIS_BUFFER_SIZE);
+    private ThreadLocal<ByteBuffer> threadBufferForReadAI3 = createDirectBuffer(READ_AI3_BUFFER_SIZE);
     private ThreadLocal<ByteBuffer> threadBufferForReadBody = createDirectBuffer(READ_BODY_BUFFER_SIZE);
 
     private ThreadPoolExecutor dataWriter = (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
     private ThreadPoolExecutor aimIndexWriter = (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
     private ThreadPoolExecutor aisIndexWriter = (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
+    private ThreadPoolExecutor ai3IndexWriter = (ThreadPoolExecutor) Executors.newFixedThreadPool(1);
 
     public DefaultMessageStoreImpl() {
         for (int i = 0; i < stageFileList.length; i++) {
@@ -73,7 +68,6 @@ public class DefaultMessageStoreImpl extends MessageStore {
             threadMinT[threadId] = message.getT();
             int putId = putCounter.getAndIncrement();
             if (putId == 0) {
-                PerfStats._putStart = System.currentTimeMillis();
                 long min = Long.MAX_VALUE;
                 for (int i = 0; i < threadMinT.length; i++) {
                     while (threadMinT[i] < 0) {
@@ -93,23 +87,24 @@ public class DefaultMessageStoreImpl extends MessageStore {
     }
 
     private int rewriteFiles() {
-        logger.info("Start rewrite files");
-        long rewriteStart = System.currentTimeMillis();
+        logger.info("Start rewriting files");
         int rewriteCount = 0;
         int currentT = 0;
-        Message[] dataBuffer = new Message[8 * 1024];
-        long[] aimBuffer = new long[A_INDEX_MAIN_BLOCK_SIZE * 2048];
-        long[] aisBuffer = new long[A_INDEX_SUB_BLOCK_SIZE * 2048];
+        Message[] dataBuffer = new Message[TMP_DATA_BUFFER_SIZE];
+        long[] aimBuffer = new long[TMP_AIM_BUFFER_SIZE];
+        long[] aisBuffer = new long[TMP_AIS_BUFFER_SIZE];
+        long[] ai3Buffer = new long[TMP_AI3_BUFFER_SIZE];
         int dataIndex = 0;
         int aimIndex = 0;
         int aisIndex = 0;
+        int ai3Index = 0;
 
         tMaxValue = Arrays.stream(stageFileList).mapToLong(StageFile::getLastT).max().orElse(0);
-        logger.info("Determined t max value: " + tMaxValue);
+        logger.info("Determined T max value: " + tMaxValue);
 
         tIndex = new short[(int) (tMaxValue - tBase + 1)];
         tIndexSummary = new int[tIndex.length / T_INDEX_SUMMARY_FACTOR + 1];
-        logger.info("Created t index and summary with length: " + tIndex.length);
+        logger.info("Created T index and summary with length: " + tIndex.length);
 
         Arrays.stream(stageFileList).forEach(StageFile::prepareForRead);
 
@@ -126,25 +121,21 @@ public class DefaultMessageStoreImpl extends MessageStore {
                     Message message = stageFile.consumePeeked();
 
                     dataBuffer[dataIndex++] = message;
-
                     if (dataIndex == dataBuffer.length) {
                         persistToDataFile(dataBuffer, dataIndex);
                         dataIndex = 0;
                     }
-
                     aimBuffer[aimIndex++] = message.getA();
                     aisBuffer[aisIndex++] = message.getA();
+                    ai3Buffer[ai3Index++] = message.getA();
 
-                    if (rewriteCount % REWRITE_SAMPLE_RATE == 0) {
-                        logger.info("Write message to data file: " + rewriteCount);
-                    }
                     rewriteCount++;
                     repeatCount++;
                 }
             }
 
             if (doneCount == stageFileList.length) {
-                logger.info("All stage files have been read");
+                logger.info("All stage files have done reading");
                 break;
             }
 
@@ -164,17 +155,21 @@ public class DefaultMessageStoreImpl extends MessageStore {
 
             // store a into multiple index
             if (currentT % A_INDEX_MAIN_BLOCK_SIZE == 0) {
-                persistToAIndexFile(aimBuffer, aimIndex, aimIndexWriter, mainIndexFile, true);
+                persistToAIndexFile(aimBuffer, aimIndex, aimIndexWriter, mainIndexFile, false);
                 aimIndex = 0;
             }
             if (currentT % A_INDEX_SUB_BLOCK_SIZE == 0) {
                 persistToAIndexFile(aisBuffer, aisIndex, aisIndexWriter, subIndexFile, false);
                 aisIndex = 0;
             }
+            if (currentT % A_INDEX_LEVEL3_BLOCK_SIZE == 0) {
+                persistToAIndexFile(ai3Buffer, ai3Index, ai3IndexWriter, level3IndexFile, false);
+                ai3Index = 0;
+            }
         }
 
         while (pendingTasks.get() > 0) {
-            logger.info("Waiting for a file writer to finish");
+            logger.info("Waiting for all file writers to finish");
             LockSupport.parkNanos(10_000_000);
         }
         for (int i = 0; i < dataIndex; i++) {
@@ -185,17 +180,18 @@ public class DefaultMessageStoreImpl extends MessageStore {
         dataWriter.shutdown();
         aimIndexWriter.shutdown();
         aisIndexWriter.shutdown();
-        logger.info("All file writer has finished");
+        ai3IndexWriter.shutdown();
+        logger.info("All file writers have finished");
 
         dataFile.flushABuffer();
         dataFile.flushBodyBuffer();
         mainIndexFile.flushABuffer();
         subIndexFile.flushABuffer();
+        level3IndexFile.flushABuffer();
 
         stageFileList = null;
         System.gc();
-        logger.info("Done rewrite files, rewrite count: " + rewriteCount
-                + ", time: " + (System.currentTimeMillis() - rewriteStart));
+        logger.info("Done rewriting with msg count: " + rewriteCount + ", t overflow: " + tIndexOverflow.size());
         return rewriteCount;
     }
 
@@ -246,17 +242,6 @@ public class DefaultMessageStoreImpl extends MessageStore {
 
     @Override
     public List<Message> getMessage(long aMin, long aMax, long tMin, long tMax) {
-//        long getStart = System.currentTimeMillis();
-//        int getId = getCounter.getAndIncrement();
-//        if (getId == 0) {
-//            PerfStats._putEnd = System.currentTimeMillis();
-//            PerfStats._getStart = PerfStats._putEnd;
-////            PerfStats.printStats(this);
-//        }
-//        if (getId % GET_SAMPLE_RATE == 0) {
-//            logger.info("getMessage - tMin: " + tMin + ", tMax: " + tMax
-//                    + ", aMin: " + aMin + ", aMax: " + aMax + ", getId: " + getId);
-//        }
         if (!rewriteDone) {
             synchronized (this) {
                 if (!rewriteDone) {
@@ -266,30 +251,21 @@ public class DefaultMessageStoreImpl extends MessageStore {
                         totalSize += stageFile.fileSize();
                     }
                     logger.info("Flushed all stage files, total size: " + totalSize
-                            + ", file count: " + totalSize / STAGE_MSG_BYTE_LENGTH);
-                    int rewriteCount;
-                    try {
-                        rewriteCount = rewriteFiles();
-                    } catch (Throwable e) {
-                        logger.info("Failed to rewrite files: " + e.getClass().getSimpleName() + " - " + e.getMessage());
-                        throw e;
-                    }
+                            + ", msg count: " + totalSize / STAGE_MSG_BYTE_LENGTH);
+
+                    int rewriteCount = rewriteFiles();
                     if (rewriteCount != totalSize / STAGE_MSG_BYTE_LENGTH) {
-                        logger.info("Inconsistent msg count");
+                        logger.info("Inconsistent msg count!");
                         throw new RuntimeException("Abort!");
                     }
                     rewriteDone = true;
                 }
-                logger.info("Rewrite task has finished" +
-                        ", t index overflow: " + tIndexOverflow.size() +
-                        ", time: " + (System.currentTimeMillis() - _getStart));
             }
         }
-
         tMin = Math.max(tMin, tBase);
         tMax = Math.min(tMax, tMaxValue);
 
-        ArrayList<Message> result = new ArrayList<>(1024);
+        ArrayList<Message> result = new ArrayList<>(RESULT_ARRAY_INIT_CAPACITY);
         int tDiff = (int) (tMin - tBase);
         long offset = getOffsetByTDiff(tDiff);
         long endOffset = getOffsetByTDiff((int) (tMax - tBase + 1));
@@ -326,31 +302,11 @@ public class DefaultMessageStoreImpl extends MessageStore {
         aByteBufferForRead.clear();
         bodyByteBufferForRead.clear();
 
-//        if (getId % GET_SAMPLE_RATE == 0) {
-//            logger.info("Return sorted result with size: " + result.size()
-//                    + ", time: " + (System.currentTimeMillis() - getStart) + ", getId: " + getId);
-//        }
-//        getMsgCounter.addAndGet(result.size());
-
         return result;
     }
 
     @Override
     public long getAvgValue(long aMin, long aMax, long tMin, long tMax) {
-//        long avgStart = System.currentTimeMillis();
-//        int avgId = avgCounter.getAndIncrement();
-//        if (avgId == 0) {
-//            PerfStats._getEnd = System.currentTimeMillis();
-//            PerfStats._avgStart = PerfStats._getEnd;
-//        }
-//        if (avgId % AVG_SAMPLE_RATE == 0) {
-//            logger.info("getAvgValue - tMin: " + tMin + ", tMax: " + tMax + ", aMin: " + aMin + ", aMax: " + aMax
-//                    + ", tRange: " + (tMax - tMin) + ", avgId: " + avgId);
-//        }
-//        if (avgId == TEST_BOUNDARY) {
-//            PerfStats.printStats(this);
-//        }
-
         long sum = 0;
         int count = 0;
 
@@ -392,23 +348,24 @@ public class DefaultMessageStoreImpl extends MessageStore {
             int t = tStart;
             while (t < tEnd) {
                 if (t % A_INDEX_MAIN_BLOCK_SIZE == 0 && t + A_INDEX_MAIN_BLOCK_SIZE <= tEnd) {
-//                    result = getAvgFromSortedIndex(aMin, aMax, t, t + A_INDEX_MAIN_BLOCK_SIZE - 1, true);
-                    result = getAvgValueFromAccumIndex(aMin, aMax, t, t + A_INDEX_MAIN_BLOCK_SIZE - 1, true);
+//                    result = getAvgValueFromAccumIndex(aMin, aMax, t, t + A_INDEX_MAIN_BLOCK_SIZE - 1,
+//                            mainIndexFile, A_INDEX_MAIN_BLOCK_SIZE, threadBufferForReadAIM.get());
+                    result = getAvgFromSortedIndex(aMin, aMax, t, t + A_INDEX_MAIN_BLOCK_SIZE - 1,
+                            mainIndexFile, A_INDEX_MAIN_BLOCK_SIZE, threadBufferForReadAIM.get());
                     t += A_INDEX_MAIN_BLOCK_SIZE;
-                } else {
-                    result = getAvgFromSortedIndex(aMin, aMax, t, t + A_INDEX_SUB_BLOCK_SIZE - 1, false);
+                } else if (t % A_INDEX_SUB_BLOCK_SIZE == 0 && t + A_INDEX_SUB_BLOCK_SIZE <= tEnd) {
+                    result = getAvgFromSortedIndex(aMin, aMax, t, t + A_INDEX_SUB_BLOCK_SIZE - 1,
+                            subIndexFile, A_INDEX_SUB_BLOCK_SIZE, threadBufferForReadAIS.get());
                     t += A_INDEX_SUB_BLOCK_SIZE;
+                } else {
+                    result = getAvgFromSortedIndex(aMin, aMax, t, t + A_INDEX_LEVEL3_BLOCK_SIZE - 1,
+                            level3IndexFile, A_INDEX_LEVEL3_BLOCK_SIZE, threadBufferForReadAI3.get());
+                    t += A_INDEX_LEVEL3_BLOCK_SIZE;
                 }
                 sum += result.getSum();
                 count += result.getCount();
             }
         }
-
-//        if (avgId % AVG_SAMPLE_RATE == 0) {
-//            logger.info("Got " + count + ", time: " + (System.currentTimeMillis() - avgStart) + ", avgId: " + avgId);
-//        }
-//        avgMsgCounter.addAndGet(count);
-
         return count > 0 ? sum / count : 0;
     }
 
@@ -445,14 +402,10 @@ public class DefaultMessageStoreImpl extends MessageStore {
         return new SumAndCount(sum, count);
     }
 
-    private SumAndCount getAvgFromSortedIndex(long aMin, long aMax, int tMin, int tMax, boolean isMain) {
+    private SumAndCount getAvgFromSortedIndex(long aMin, long aMax, int tMin, int tMax,
+                                              IndexFile indexFile, int blockSize, ByteBuffer aiByteBufferForRead) {
         long sum = 0;
         int count = 0;
-
-        IndexFile indexFile = isMain ? mainIndexFile : subIndexFile;
-        int blockSize = isMain ? A_INDEX_MAIN_BLOCK_SIZE : A_INDEX_SUB_BLOCK_SIZE;
-        ByteBuffer aiByteBufferForRead = isMain ? threadBufferForReadAIM.get() : threadBufferForReadAIS.get();
-
         long[] metaIndex = indexFile.getMetaIndex(tMin / blockSize);
         long rangeMin = metaIndex[0];
         long rangeMax = metaIndex[metaIndex.length - 1];
@@ -522,14 +475,10 @@ public class DefaultMessageStoreImpl extends MessageStore {
         return new SumAndCount(sum, count);
     }
 
-    private SumAndCount getAvgValueFromAccumIndex(long aMin, long aMax, int tMin, int tMax, boolean isMain) {
+    private SumAndCount getAvgValueFromAccumIndex(long aMin, long aMax, int tMin, int tMax,
+                                                  IndexFile indexFile, int blockSize, ByteBuffer aiByteBufferForRead) {
         long sum;
         int count;
-
-        IndexFile indexFile = isMain ? mainIndexFile : subIndexFile;
-        int blockSize = isMain ? A_INDEX_MAIN_BLOCK_SIZE : A_INDEX_SUB_BLOCK_SIZE;
-        ByteBuffer aiByteBufferForRead = isMain ? threadBufferForReadAIM.get() : threadBufferForReadAIS.get();
-
         long[] metaIndex = indexFile.getMetaIndex(tMin / blockSize);
         long rangeMin = metaIndex[0];
         long rangeMax = metaIndex[metaIndex.length - 1];
@@ -667,9 +616,5 @@ public class DefaultMessageStoreImpl extends MessageStore {
             }
         }
         return offset;
-    }
-
-    AtomicInteger getPutCounter() {
-        return putCounter;
     }
 }

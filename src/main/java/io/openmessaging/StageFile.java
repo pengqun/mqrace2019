@@ -42,6 +42,7 @@ class StageFile {
             flushBuffer();
         }
         long tDiff = message.getT() - lastT;
+        // NOTE: overflowed (>= 255) diff will be stored in additional list
         if (tDiff < MAX_UNSIGNED_BYTE) {
             byteBufferForWrite.put((byte) tDiff);
         } else {

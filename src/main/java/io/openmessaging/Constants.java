@@ -4,7 +4,6 @@ package io.openmessaging;
  * @author pengqun.pq
  */
 class Constants {
-
     static final String DATA_DIR = "/alidata1/race2019/data/";
 //    static final String DATA_DIR = "/tmp/";
 
@@ -16,7 +15,7 @@ class Constants {
 
     static final int T_INDEX_SUMMARY_FACTOR = 64;
 
-    static final int A_INDEX_LEVEL1_BLOCK_SIZE = 1024 * 9;
+    static final int A_INDEX_LEVEL1_BLOCK_SIZE = 1024 * 12;
     static final int A_INDEX_LEVEL2_BLOCK_SIZE = 1024 * 6;
     static final int A_INDEX_LEVEL3_BLOCK_SIZE = 1024 * 3;
     static final int A_INDEX_META_FACTOR = 32;
